@@ -69,8 +69,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $member_id = $member['id'];
                     // Calculate new points balance
                     $points_balance = $member['points'] - $points_used;
-                    // Add new points (1% of subtotal)
-                    $points_earned = $subtotal * 0.01;
+                    
+                    // Only earn points if they paid some amount (not just using points)
+                    $points_earned = ($final_amount > 0) ? ($subtotal * 0.01) : 0;
                     $points_balance += $points_earned;
 
                     // Update member points
