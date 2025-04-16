@@ -1,83 +1,111 @@
 <?php
+// Start session and include database connection
 session_start();
 require_once 'includes/db.php';
 
-if ($_POST['action'] == 'add') {
-    $product_id = $_POST['product_id'];
-    $stmt = $conn->prepare("SELECT * FROM products WHERE product_id = :product_id");
-    $stmt->execute(['product_id' => $product_id]);
-    $product = $stmt->fetch(PDO::FETCH_ASSOC);
-    if ($product && $product['stock_quantity'] > 0) {
-        echo json_encode(['product_id' => $product['product_id'], 'name' => $product['name'], 'price' => $product['price']]);
-    } else {
-        echo json_encode(['error' => 'Product not found or out of stock']);
+// Check if user is authenticated as cashier
+if (!isset($_SESSION['user_id']) || $_SESSION['role_id'] != 2) {
+    echo json_encode(['error' => 'Unauthorized access']);
+    exit;
+}
+
+// Set response header to JSON
+header('Content-Type: application/json');
+
+// Handle different transaction actions
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    $action = $_POST['action'] ?? '';
+
+    // Handle adding product to transaction
+    if ($action == 'add') {
+        $product_id = $_POST['product_id'] ?? 0;
+        
+        // Fetch product details for the transaction
+        $stmt = $conn->prepare("SELECT product_id, name, price, image_path FROM products WHERE product_id = :id");
+        $stmt->execute(['id' => $product_id]);
+        $product = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($product) {
+            echo json_encode($product);
+        } else {
+            echo json_encode(['error' => 'Product not found']);
+        }
     }
-} elseif ($_POST['action'] == 'process') {
-    $items = $_POST['items'];
-    $discount = floatval($_POST['discount']);
-    $amount_paid = floatval($_POST['amount_paid']);
-    $cashier_id = $_SESSION['user_id'];
-
-    $conn->beginTransaction();
-    try {
-        // Temporarily insert with zero values until calculated later
-        $stmt = $conn->prepare("INSERT INTO transactions (date_time, total_amount, discount_amount, amount_paid, change_given, cashier_id)
-                                VALUES (NOW(), 0, :discount, 0, 0, :cashier_id)");
-        $stmt->execute(['discount' => $discount, 'cashier_id' => $cashier_id]);
-        $transaction_id = $conn->lastInsertId();
-        $total_amount = 0;
-
-        foreach ($items as $item) {
-            $stmt = $conn->prepare("SELECT stock_quantity, price FROM products WHERE product_id = :product_id");
-            $stmt->execute(['product_id' => $item['product_id']]);
-            $prod = $stmt->fetch();
-            if ($prod['stock_quantity'] < $item['quantity']) {
-                throw new Exception("Insufficient stock for " . $item['name']);
+    // Handle processing complete transaction
+    elseif ($action == 'process') {
+        try {
+            // Start transaction to ensure data consistency
+            $conn->beginTransaction();
+            
+            // Get transaction data
+            $items = $_POST['items'] ?? [];
+            $discount = floatval($_POST['discount'] ?? 0);
+            $amount_paid = floatval($_POST['amount_paid'] ?? 0);
+            
+            // Calculate total amount
+            $total_amount = 0;
+            foreach ($items as $item) {
+                $total_amount += floatval($item['price']) * intval($item['quantity']);
             }
-            $subtotal = $item['quantity'] * $prod['price'];
-            $total_amount += $subtotal;
-
-            // Insert detail
-            $stmt = $conn->prepare("INSERT INTO transaction_details (transaction_id, product_id, quantity, price_per_unit)
-                                    VALUES (:tid, :pid, :qty, :price)");
+            
+            // Apply discount
+            $final_amount = $total_amount - $discount;
+            
+            // Validate payment amount
+            if ($amount_paid < $final_amount) {
+                throw new Exception('Insufficient payment amount');
+            }
+            
+            // Insert transaction record
+            $stmt = $conn->prepare("INSERT INTO transactions (cashier_id, date_time, total_amount, discount_amount) 
+                                  VALUES (:cashier_id, NOW(), :total_amount, :discount_amount)");
             $stmt->execute([
-                'tid' => $transaction_id,
-                'pid' => $item['product_id'],
-                'qty' => $item['quantity'],
-                'price' => $prod['price']
+                'cashier_id' => $_SESSION['user_id'],
+                'total_amount' => $final_amount,
+                'discount_amount' => $discount
             ]);
-
-            // Update stock
-            $stmt = $conn->prepare("UPDATE products SET stock_quantity = stock_quantity - :qty WHERE product_id = :pid");
-            $stmt->execute(['qty' => $item['quantity'], 'pid' => $item['product_id']]);
+            
+            $transaction_id = $conn->lastInsertId();
+            
+            // Insert transaction items
+            $stmt = $conn->prepare("INSERT INTO transaction_items (transaction_id, product_id, quantity, price) 
+                                  VALUES (:transaction_id, :product_id, :quantity, :price)");
+            
+            // Update product stock
+            $updateStock = $conn->prepare("UPDATE products 
+                                         SET stock_quantity = stock_quantity - :quantity 
+                                         WHERE product_id = :product_id");
+            
+            // Process each item in the transaction
+            foreach ($items as $item) {
+                // Insert item details
+                $stmt->execute([
+                    'transaction_id' => $transaction_id,
+                    'product_id' => $item['product_id'],
+                    'quantity' => $item['quantity'],
+                    'price' => $item['price']
+                ]);
+                
+                // Update product stock
+                $updateStock->execute([
+                    'quantity' => $item['quantity'],
+                    'product_id' => $item['product_id']
+                ]);
+            }
+            
+            // Commit all changes if successful
+            $conn->commit();
+            echo json_encode(['success' => true]);
+            
+        } catch (Exception $e) {
+            // Rollback changes if any error occurs
+            $conn->rollBack();
+            echo json_encode(['error' => $e->getMessage()]);
         }
-
-        $total_after_discount = $total_amount - $discount;
-        $change_given = $amount_paid - $total_after_discount;
-
-        if ($change_given < 0) {
-            throw new Exception("Amount paid is less than total after discount.");
-        }
-
-        // Final update of transaction
-        $stmt = $conn->prepare("UPDATE transactions
-                                SET total_amount = :total, amount_paid = :paid, change_given = :change
-                                WHERE transaction_id = :tid");
-        $stmt->execute([
-            'total' => $total_after_discount,
-            'paid' => $amount_paid,
-            'change' => $change_given,
-            'tid' => $transaction_id
-        ]);
-
-        $conn->commit();
-        echo json_encode([
-            'message' => 'Transaction processed successfully',
-            'transaction_id' => $transaction_id
-        ]);
-    } catch (Exception $e) {
-        $conn->rollBack();
-        echo json_encode(['error' => $e->getMessage()]);
+    }
+    // Handle invalid action
+    else {
+        echo json_encode(['error' => 'Invalid action']);
     }
 }
 ?>
