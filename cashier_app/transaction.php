@@ -5,7 +5,7 @@ require_once 'includes/db.php';
 
 // Check if user is authenticated as cashier
 if (!isset($_SESSION['user_id']) || $_SESSION['role_id'] != 2) {
-    echo json_encode(['error' => 'Unauthorized access']);
+    echo json_encode(['error' => 'Unauthorized access'], JSON_THROW_ON_ERROR);
     exit;
 }
 
@@ -26,9 +26,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $product = $stmt->fetch(PDO::FETCH_ASSOC);
         
         if ($product) {
-            echo json_encode($product);
+            echo json_encode($product, JSON_THROW_ON_ERROR);
         } else {
-            echo json_encode(['error' => 'Product not found']);
+            echo json_encode(['error' => 'Product not found'], JSON_THROW_ON_ERROR);
         }
     }
     // Handle processing complete transaction
@@ -39,44 +39,80 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             
             // Get transaction data
             $items = $_POST['items'] ?? [];
-            $discount = floatval($_POST['discount'] ?? 0);
+            $is_member = $_POST['is_member'] ?? false;
+            $phone_number = $_POST['phone_number'] ?? '';
+            $use_points = $_POST['use_points'] ?? false;
+            $points_used = floatval($_POST['points_used'] ?? 0);
+            $additional_discount = floatval($_POST['additional_discount'] ?? 0);
             $amount_paid = floatval($_POST['amount_paid'] ?? 0);
+            $subtotal = floatval($_POST['subtotal'] ?? 0);
             
-            // Calculate total amount
-            $total_amount = 0;
-            foreach ($items as $item) {
-                $total_amount += floatval($item['price']) * intval($item['quantity']);
-            }
-            
-            // Apply discount
-            $final_amount = $total_amount - $discount;
+            // Calculate final amount
+            $final_amount = $subtotal - $points_used - $additional_discount;
             
             // Validate payment amount
             if ($amount_paid < $final_amount) {
                 throw new Exception('Insufficient payment amount');
             }
+
+            $member_id = null;
+            $points_earned = 0;
+
+            // Handle member processing
+            if ($is_member) {
+                // Check if member exists
+                $stmt = $conn->prepare("SELECT id, points FROM members WHERE phone_number = :phone");
+                $stmt->execute(['phone' => $phone_number]);
+                $member = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if ($member) {
+                    $member_id = $member['id'];
+                    // Calculate new points balance
+                    $points_balance = $member['points'] - $points_used;
+                    // Add new points (1% of subtotal)
+                    $points_earned = $subtotal * 0.01;
+                    $points_balance += $points_earned;
+
+                    // Update member points
+                    $stmt = $conn->prepare("UPDATE members SET points = :points WHERE id = :id");
+                    $stmt->execute([
+                        'points' => $points_balance,
+                        'id' => $member_id
+                    ]);
+                } else {
+                    // Register new member
+                    $stmt = $conn->prepare("INSERT INTO members (phone_number, points, first_purchase_date) VALUES (:phone, :points, NOW())");
+                    $stmt->execute([
+                        'phone' => $phone_number,
+                        'points' => $subtotal * 0.01 // 1% points from first purchase
+                    ]);
+                    $member_id = $conn->lastInsertId();
+                    $points_earned = $subtotal * 0.01;
+                }
+            }
             
             // Insert transaction record
-            $stmt = $conn->prepare("INSERT INTO transactions (cashier_id, date_time, total_amount, discount_amount) 
-                                  VALUES (:cashier_id, NOW(), :total_amount, :discount_amount)");
+            $stmt = $conn->prepare("INSERT INTO transactions (cashier_id, date_time, total_amount, discount_amount, member_id, points_used, points_earned) 
+                                  VALUES (:cashier_id, NOW(), :total_amount, :discount_amount, :member_id, :points_used, :points_earned)");
             $stmt->execute([
                 'cashier_id' => $_SESSION['user_id'],
                 'total_amount' => $final_amount,
-                'discount_amount' => $discount
+                'discount_amount' => $additional_discount + $points_used,
+                'member_id' => $member_id,
+                'points_used' => $points_used,
+                'points_earned' => $points_earned
             ]);
             
             $transaction_id = $conn->lastInsertId();
             
-            // Insert transaction items
-            $stmt = $conn->prepare("INSERT INTO transaction_items (transaction_id, product_id, quantity, price) 
+            // Insert transaction items and update stock
+            $stmt = $conn->prepare("INSERT INTO transaction_details (transaction_id, product_id, quantity, price_per_unit) 
                                   VALUES (:transaction_id, :product_id, :quantity, :price)");
             
-            // Update product stock
             $updateStock = $conn->prepare("UPDATE products 
                                          SET stock_quantity = stock_quantity - :quantity 
                                          WHERE product_id = :product_id");
             
-            // Process each item in the transaction
             foreach ($items as $item) {
                 // Insert item details
                 $stmt->execute([
@@ -93,19 +129,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 ]);
             }
             
-            // Commit all changes if successful
+            // Commit all changes
             $conn->commit();
-            echo json_encode(['success' => true]);
+            echo json_encode([
+                'success' => true,
+                'points_earned' => $points_earned
+            ], JSON_THROW_ON_ERROR);
             
         } catch (Exception $e) {
-            // Rollback changes if any error occurs
+            // Rollback changes on error
             $conn->rollBack();
-            echo json_encode(['error' => $e->getMessage()]);
+            echo json_encode(['error' => $e->getMessage()], JSON_THROW_ON_ERROR);
         }
     }
     // Handle invalid action
     else {
-        echo json_encode(['error' => 'Invalid action']);
+        echo json_encode(['error' => 'Invalid action'], JSON_THROW_ON_ERROR);
     }
 }
 ?>

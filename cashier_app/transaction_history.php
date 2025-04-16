@@ -47,12 +47,15 @@ $totalStmt = $conn->query("SELECT COUNT(*) as total FROM transactions");
 $total = $totalStmt->fetch(PDO::FETCH_ASSOC)['total'];
 $totalPages = ceil($total / $limit);
 
-// Fetch transactions with cashier details for current page
-$stmt = $conn->prepare("SELECT t.*, u.username 
-                       FROM transactions t 
-                       JOIN users u ON t.cashier_id = u.user_id 
-                       ORDER BY t.date_time DESC 
-                       LIMIT :limit OFFSET :offset");
+// Fetch transactions with cashier and member details for current page
+$stmt = $conn->prepare("
+    SELECT t.*, u.username, m.phone_number as member_phone
+    FROM transactions t 
+    JOIN users u ON t.cashier_id = u.user_id 
+    LEFT JOIN members m ON t.member_id = m.id
+    ORDER BY t.date_time DESC 
+    LIMIT :limit OFFSET :offset
+");
 $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
 $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
 $stmt->execute();
@@ -120,6 +123,9 @@ $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <th>Total Amount</th>
                     <th>Discount</th>
                     <th>Cashier</th>
+                    <th>Member Phone</th>
+                    <th>Points Used</th>
+                    <th>Points Earned</th>
                 </tr>
             </thead>
             <tbody>
@@ -130,6 +136,9 @@ $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <td>$<?php echo number_format($trans['total_amount'], 2); ?></td>
                     <td>$<?php echo number_format($trans['discount_amount'], 2); ?></td>
                     <td><?php echo $trans['username']; ?></td>
+                    <td><?php echo $trans['member_phone'] ?? 'Non-member'; ?></td>
+                    <td>$<?php echo number_format($trans['points_used'], 2); ?></td>
+                    <td>$<?php echo number_format($trans['points_earned'], 2); ?></td>
                 </tr>
                 <?php endforeach; ?>
             </tbody>

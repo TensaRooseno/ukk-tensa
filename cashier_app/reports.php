@@ -1,9 +1,7 @@
 <?php
-// Start session and include required files
+// Start session and include database connection
 session_start();
 require_once 'includes/db.php';
-require_once 'vendor/autoload.php';
-use PhpOffice\PhpSpreadsheet\Spreadsheet;
 
 // Authentication check - Only admin can access this page
 if (!isset($_SESSION['user_id']) || $_SESSION['role_id'] != 1) {
@@ -11,105 +9,76 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role_id'] != 1) {
     exit;
 }
 
-$error = '';
-// Handle report generation form submission
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $type = $_POST['type'];  // monthly or annual
-    $period = $_POST['period']; // Expected format: YYYY-MM for monthly, YYYY for annual
-    
-    // Input validation for period format
-    if ($type == 'monthly' && !preg_match('/^\d{4}-\d{2}$/', $period)) {
-        $error = "Invalid monthly period format. Use YYYY-MM.";
-    } elseif ($type == 'annual' && !preg_match('/^\d{4}$/', $period)) {
-        $error = "Invalid annual period format. Use YYYY.";
-    } else {
-        // Parse period into year and month
-        list($year, $month) = $type == 'monthly' ? explode('-', $period) : [$period, null];
-        
-        // Prepare query based on report type
-        $query = $type == 'monthly' ?
-            "SELECT t.transaction_id, t.date_time, t.total_amount, t.discount_amount, u.username 
-             FROM transactions t JOIN users u ON t.cashier_id = u.user_id 
-             WHERE YEAR(t.date_time) = :year AND MONTH(t.date_time) = :month" :
-            "SELECT t.transaction_id, t.date_time, t.total_amount, t.discount_amount, u.username 
-             FROM transactions t JOIN users u ON t.cashier_id = u.user_id 
-             WHERE YEAR(t.date_time) = :year";
-        
-        // Execute query with appropriate parameters
-        $stmt = $conn->prepare($query);
-        $params = $type == 'monthly' ? ['year' => $year, 'month' => $month] : ['year' => $year];
-        $stmt->execute($params);
-        $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+// Get date range filter
+$start_date = $_GET['start_date'] ?? date('Y-m-01'); // Default to first day of current month
+$end_date = $_GET['end_date'] ?? date('Y-m-d'); // Default to today
 
-        if (empty($transactions)) {
-            $error = "No transactions found for the specified period.";
-        } 
-        // Generate Excel report
-        elseif ($_POST['format'] == 'excel') {
-            // Create new spreadsheet
-            $spreadsheet = new Spreadsheet();
-            $sheet = $spreadsheet->getActiveSheet();
-            
-            // Set up headers
-            $sheet->setCellValue('A1', 'Transaction ID');
-            $sheet->setCellValue('B1', 'Date');
-            $sheet->setCellValue('C1', 'Total Amount');
-            $sheet->setCellValue('D1', 'Discount');
-            $sheet->setCellValue('E1', 'Cashier');
-            
-            // Fill data rows
-            $row = 2;
-            foreach ($transactions as $t) {
-                $sheet->setCellValue("A$row", $t['transaction_id']);
-                $sheet->setCellValue("B$row", $t['date_time']);
-                $sheet->setCellValue("C$row", $t['total_amount']);
-                $sheet->setCellValue("D$row", $t['discount_amount']);
-                $sheet->setCellValue("E$row", $t['username']);
-                $row++;
-            }
-            
-            // Output Excel file for download
-            $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
-            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            header("Content-Disposition: attachment; filename=\"$type-report-$period.xlsx\"");
-            $writer->save('php://output');
-            exit;
-        } 
-        // Generate PDF report
-        else {
-            // Initialize TCPDF
-            $pdf = new TCPDF();
-            $pdf->AddPage();
-            $pdf->SetFont('helvetica', '', 12);
-            
-            // Add title
-            $pdf->Cell(0, 10, "$type Report - $period", 0, 1, 'C');
-            $pdf->Ln(10);
-            
-            // Add table headers
-            $pdf->Cell(30, 10, 'Trans ID', 1);
-            $pdf->Cell(50, 10, 'Date', 1);
-            $pdf->Cell(30, 10, 'Total', 1);
-            $pdf->Cell(30, 10, 'Discount', 1);
-            $pdf->Cell(40, 10, 'Cashier', 1);
-            $pdf->Ln();
-            
-            // Add table data
-            foreach ($transactions as $t) {
-                $pdf->Cell(30, 10, $t['transaction_id'], 1);
-                $pdf->Cell(50, 10, $t['date_time'], 1);
-                $pdf->Cell(30, 10, '$' . number_format($t['total_amount'], 2), 1);
-                $pdf->Cell(30, 10, '$' . number_format($t['discount_amount'], 2), 1);
-                $pdf->Cell(40, 10, $t['username'], 1);
-                $pdf->Ln();
-            }
-            
-            // Output PDF file for download
-            $pdf->Output("$type-report-$period.pdf", 'D');
-            exit;
-        }
-    }
-}
+// Fetch overall statistics
+$statsQuery = $conn->prepare("
+    SELECT 
+        COUNT(DISTINCT t.transaction_id) as total_transactions,
+        COUNT(DISTINCT t.member_id) as member_transactions,
+        SUM(t.total_amount) as total_revenue,
+        SUM(t.points_earned) as total_points_earned,
+        SUM(t.points_used) as total_points_redeemed
+    FROM transactions t
+    WHERE DATE(t.date_time) BETWEEN :start_date AND :end_date
+");
+$statsQuery->execute([
+    'start_date' => $start_date,
+    'end_date' => $end_date
+]);
+$stats = $statsQuery->fetch(PDO::FETCH_ASSOC);
+
+// Get member statistics
+$memberStatsQuery = $conn->prepare("
+    SELECT 
+        COUNT(*) as total_members,
+        COUNT(CASE WHEN first_purchase_date BETWEEN :start_date AND :end_date THEN 1 END) as new_members,
+        AVG(points) as avg_points
+    FROM members
+");
+$memberStatsQuery->execute([
+    'start_date' => $start_date,
+    'end_date' => $end_date
+]);
+$memberStats = $memberStatsQuery->fetch(PDO::FETCH_ASSOC);
+
+// Get top members by points
+$topMembersQuery = $conn->prepare("
+    SELECT 
+        m.phone_number,
+        m.points,
+        COUNT(t.transaction_id) as total_purchases,
+        SUM(t.total_amount) as total_spent
+    FROM members m
+    LEFT JOIN transactions t ON m.id = t.member_id
+    WHERE t.date_time BETWEEN :start_date AND :end_date
+        OR t.date_time IS NULL
+    GROUP BY m.id, m.phone_number, m.points
+    ORDER BY m.points DESC
+    LIMIT 5
+");
+$topMembersQuery->execute([
+    'start_date' => $start_date,
+    'end_date' => $end_date
+]);
+$topMembers = $topMembersQuery->fetchAll(PDO::FETCH_ASSOC);
+
+// Calculate points statistics
+$pointsStatsQuery = $conn->prepare("
+    SELECT 
+        SUM(points_earned) as total_points_earned,
+        SUM(points_used) as total_points_used,
+        COUNT(DISTINCT CASE WHEN points_used > 0 THEN member_id END) as members_using_points
+    FROM transactions
+    WHERE date_time BETWEEN :start_date AND :end_date
+");
+$pointsStatsQuery->execute([
+    'start_date' => $start_date,
+    'end_date' => $end_date
+]);
+$pointsStats = $pointsStatsQuery->fetch(PDO::FETCH_ASSOC);
 ?>
 
 <!DOCTYPE html>
@@ -118,18 +87,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <title>Reports - Cashier App</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- Include required CSS -->
+    <!-- Include Bootstrap CSS and JS -->
     <link href="/ukk/cashier_app/assets/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/pikaday/css/pikaday.css" rel="stylesheet">
-    
-    <!-- Include required JavaScript -->
     <script src="/ukk/cashier_app/assets/bootstrap.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/moment/min/moment.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/pikaday/pikaday.js"></script>
-    
-    <!-- Styles for layout and datepicker -->
     <style>
-        /* Main layout styles */
         .sidebar {
             height: 100vh;
             position: fixed;
@@ -142,31 +103,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         .sidebar .nav-link {
             color: #fff;
         }
-        .sidebar .nav-link:hover {
+        .sidebar .nav-link:hover,
+        .sidebar .nav-link.active {
             background-color: #495057;
         }
         .main-content {
             margin-left: 250px;
             padding: 20px;
         }
-        
-        /* Pikaday datepicker customization */
-        #pika-container {
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            background-color: #fff;
-            font-family: 'Helvetica', sans-serif;
+        .stats-card {
+            transition: all 0.3s ease;
         }
-        .pika-single { border: none; }
-        .pika-day:hover, .pika-day:focus { background-color: #e9ecef; }
-        .pika-day.is-selected {
-            background-color: #007bff;
-            color: #fff;
-        }
-        .pika-prev, .pika-next { color: #007bff; }
-        .pika-select-month, .pika-select-year {
-            color: #343a40;
-            font-weight: bold;
+        .stats-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
     </style>
 </head>
@@ -198,108 +148,150 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
     <!-- Main Content Area -->
     <div class="main-content">
-        <h2>Generate Reports</h2>
-        <p>Create monthly or annual transaction reports in Excel or PDF format.</p>
+        <h2>Reports and Analytics</h2>
 
-        <!-- Error message display -->
-        <?php if ($error): ?>
-            <div class="alert alert-danger" role="alert">
-                <?php echo $error; ?>
-            </div>
-        <?php endif; ?>
-
-        <!-- Report Generation Form -->
-        <div class="card">
+        <!-- Date Range Filter -->
+        <div class="card mb-4">
             <div class="card-body">
-                <form method="POST">
-                    <!-- Report Type Selection -->
-                    <div class="mb-3">
-                        <label for="type" class="form-label">Report Type</label>
-                        <select name="type" id="type" class="form-control">
-                            <option value="monthly">Monthly</option>
-                            <option value="annual">Annual</option>
-                        </select>
+                <form method="GET" class="row g-3">
+                    <div class="col-md-4">
+                        <label for="start_date" class="form-label">Start Date</label>
+                        <input type="date" class="form-control" id="start_date" name="start_date" 
+                               value="<?php echo $start_date; ?>">
                     </div>
-                    
-                    <!-- Period Selection with Pikaday -->
-                    <div class="mb-3">
-                        <label for="period" class="form-label">Period</label>
-                        <input type="text" name="period" id="period" class="form-control" required>
-                        <div id="pika-container" style="position: absolute; z-index: 1000;"></div>
+                    <div class="col-md-4">
+                        <label for="end_date" class="form-label">End Date</label>
+                        <input type="date" class="form-control" id="end_date" name="end_date" 
+                               value="<?php echo $end_date; ?>">
                     </div>
-                    
-                    <!-- Format Selection -->
-                    <div class="mb-3">
-                        <label for="format" class="form-label">Format</label>
-                        <select name="format" id="format" class="form-control">
-                            <option value="excel">Excel</option>
-                            <option value="pdf">PDF</option>
-                        </select>
+                    <div class="col-md-4">
+                        <label class="form-label">&nbsp;</label>
+                        <button type="submit" class="btn btn-primary d-block">Apply Filter</button>
                     </div>
-                    
-                    <button type="submit" class="btn btn-primary">Generate Report</button>
                 </form>
             </div>
         </div>
+
+        <!-- Overall Statistics -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card stats-card bg-primary text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Total Revenue</h5>
+                        <p class="card-text display-6">$<?php echo number_format($stats['total_revenue'], 2); ?></p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stats-card bg-success text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Total Transactions</h5>
+                        <p class="card-text display-6"><?php echo $stats['total_transactions']; ?></p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stats-card bg-info text-white">
+                    <div class="card-body">
+                        <h5 class="card-title">Member Transactions</h5>
+                        <p class="card-text display-6"><?php echo $stats['member_transactions']; ?></p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stats-card bg-warning text-dark">
+                    <div class="card-body">
+                        <h5 class="card-title">Points Earned</h5>
+                        <p class="card-text display-6">$<?php echo number_format($stats['total_points_earned'], 2); ?></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Membership Statistics -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">Membership Overview</h5>
+                    </div>
+                    <div class="card-body">
+                        <ul class="list-group">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                Total Members
+                                <span class="badge bg-primary rounded-pill"><?php echo $memberStats['total_members']; ?></span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                New Members
+                                <span class="badge bg-success rounded-pill"><?php echo $memberStats['new_members']; ?></span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                Average Points Balance
+                                <span class="badge bg-info rounded-pill">$<?php echo number_format($memberStats['avg_points'], 2); ?></span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                Members Using Points
+                                <span class="badge bg-warning rounded-pill"><?php echo $pointsStats['members_using_points']; ?></span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">Points Activity</h5>
+                    </div>
+                    <div class="card-body">
+                        <ul class="list-group">
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                Total Points Earned
+                                <span class="badge bg-success rounded-pill">$<?php echo number_format($pointsStats['total_points_earned'], 2); ?></span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                Total Points Redeemed
+                                <span class="badge bg-danger rounded-pill">$<?php echo number_format($pointsStats['total_points_used'], 2); ?></span>
+                            </li>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                Net Points Balance
+                                <span class="badge bg-info rounded-pill">$<?php echo number_format($pointsStats['total_points_earned'] - $pointsStats['total_points_used'], 2); ?></span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Top Members Table -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Top Members by Points</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Phone Number</th>
+                                <th>Points Balance</th>
+                                <th>Total Purchases</th>
+                                <th>Total Spent</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($topMembers as $member): ?>
+                            <tr>
+                                <td><?php echo $member['phone_number']; ?></td>
+                                <td>$<?php echo number_format($member['points'], 2); ?></td>
+                                <td><?php echo $member['total_purchases']; ?></td>
+                                <td>$<?php echo number_format($member['total_spent'], 2); ?></td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
-
-    <!-- Pikaday Datepicker Configuration -->
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const typeSelect = document.getElementById('type');
-            const periodInput = document.getElementById('period');
-            let picker;
-
-            // Initialize Pikaday datepicker with appropriate options
-            function initializePicker() {
-                if (picker) picker.destroy(); // Clean up existing picker
-                const isMonthly = typeSelect.value === 'monthly';
-                
-                // Configure picker options
-                picker = new Pikaday({
-                    field: periodInput,
-                    container: document.getElementById('pika-container'),
-                    format: isMonthly ? 'YYYY-MM' : 'YYYY',
-                    minDate: new Date(2020, 0, 1), // Start from January 2020
-                    maxDate: new Date(), // Up to current date
-                    yearRange: [2020, new Date().getFullYear()],
-                    onSelect: function(date) {
-                        const format = isMonthly ? 'YYYY-MM' : 'YYYY';
-                        periodInput.value = this.getMoment().format(format);
-                    },
-                    toString: function(date, format) {
-                        return moment(date).format(format);
-                    },
-                    parse: function(dateString, format) {
-                        return moment(dateString, format).toDate();
-                    },
-                    showMonthAfterYear: false,
-                    showDaysInNextAndPreviousMonths: false,
-                    firstDay: 1 // Start week on Monday
-                });
-
-                // Customize view for annual selection
-                if (!isMonthly) {
-                    picker.config({
-                        showMonthAfterYear: true,
-                        onOpen: function() {
-                            const calendar = this.el;
-                            // Hide day and month selectors for annual view
-                            const dayContainer = calendar.querySelector('.pika-table');
-                            if (dayContainer) dayContainer.style.display = 'none';
-                            const monthSelect = calendar.querySelector('.pika-select-month');
-                            if (monthSelect) monthSelect.style.display = 'none';
-                        }
-                    });
-                }
-            }
-
-            // Update picker when report type changes
-            typeSelect.addEventListener('change', initializePicker);
-
-            // Initialize picker on page load
-            initializePicker();
-        });
-    </script>
 </body>
 </html>

@@ -8,6 +8,23 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role_id'] != 2) {
     header("Location: index.php");
     exit;
 }
+
+// Create members table if it doesn't exist
+$conn->query("CREATE TABLE IF NOT EXISTS members (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    phone_number VARCHAR(15) UNIQUE,
+    points DECIMAL(10,2) DEFAULT 0.00,
+    first_purchase_date DATETIME NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)");
+
+// Add member fields to transactions if they don't exist
+$conn->query("ALTER TABLE transactions 
+    ADD COLUMN IF NOT EXISTS member_id INT NULL,
+    ADD COLUMN IF NOT EXISTS points_used DECIMAL(10,2) DEFAULT 0.00,
+    ADD COLUMN IF NOT EXISTS points_earned DECIMAL(10,2) DEFAULT 0.00,
+    ADD FOREIGN KEY IF NOT EXISTS (member_id) REFERENCES members(id)
+");
 ?>
 
 <!DOCTYPE html>
@@ -57,6 +74,9 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role_id'] != 2) {
             font-size: 1.2rem;
             font-weight: bold;
             margin-top: 10px;
+        }
+        #memberInfo {
+            display: none;
         }
     </style>
 </head>
@@ -128,8 +148,32 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role_id'] != 2) {
                 <div class="row">
                     <!-- Payment Input Fields -->
                     <div class="col-md-6">
+                        <!-- Member Section -->
                         <div class="mb-3">
-                            <label for="discount" class="form-label">Discount</label>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="isMember">
+                                <label class="form-check-label" for="isMember">
+                                    Customer is a Member
+                                </label>
+                            </div>
+                            <div id="memberInfo">
+                                <div class="mb-2">
+                                    <label for="phoneNumber" class="form-label">Phone Number</label>
+                                    <input type="tel" id="phoneNumber" class="form-control" placeholder="Enter phone number">
+                                </div>
+                                <div id="memberDetails" class="alert alert-info d-none">
+                                    <!-- Member details will be shown here -->
+                                </div>
+                                <div class="form-check mb-2 d-none" id="usePointsCheck">
+                                    <input class="form-check-input" type="checkbox" id="usePoints">
+                                    <label class="form-check-label" for="usePoints">
+                                        Use available points as discount
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="discount" class="form-label">Additional Discount</label>
                             <input type="number" id="discount" class="form-control" placeholder="Enter discount">
                         </div>
                         <div class="mb-3">
@@ -140,7 +184,16 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role_id'] != 2) {
                     <!-- Total and Change Display -->
                     <div class="col-md-6">
                         <div class="total-section">
-                            Total: <span id="totalAmount">$0.00</span>
+                            Subtotal: <span id="subtotalAmount">$0.00</span>
+                        </div>
+                        <div class="total-section">
+                            Points Discount: <span id="pointsDiscount">$0.00</span>
+                        </div>
+                        <div class="total-section">
+                            Additional Discount: <span id="additionalDiscount">$0.00</span>
+                        </div>
+                        <div class="total-section">
+                            Final Total: <span id="totalAmount">$0.00</span>
                         </div>
                         <div class="change-section">
                             Change: <span id="changeGiven">$0.00</span>
@@ -155,8 +208,61 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role_id'] != 2) {
     <!-- Transaction Processing JavaScript -->
     <script>
         $(document).ready(function() {
-            // Initialize transaction items array
             let transactionItems = [];
+            let memberPoints = 0;
+            let isFirstPurchase = true;
+
+            // Toggle member info section
+            $('#isMember').change(function() {
+                $('#memberInfo').toggle(this.checked);
+                if (!this.checked) {
+                    $('#phoneNumber').val('');
+                    $('#memberDetails').addClass('d-none');
+                    $('#usePointsCheck').addClass('d-none');
+                    $('#usePoints').prop('checked', false);
+                }
+                updateTotals();
+            });
+
+            // Phone number lookup
+            $('#phoneNumber').on('blur', function() {
+                const phone = $(this).val();
+                if (phone) {
+                    $.post('check_member.php', { phone_number: phone }, function(response) {
+                        try {
+                            const data = typeof response === 'string' ? JSON.parse(response) : response;
+                            if (data.exists) {
+                                memberPoints = parseFloat(data.points);
+                                isFirstPurchase = false;
+                                $('#memberDetails').removeClass('d-none')
+                                    .html(`Available Points: $${memberPoints.toFixed(2)}`);
+                                if (memberPoints > 0) {
+                                    $('#usePointsCheck').removeClass('d-none');
+                                }
+                            } else {
+                                memberPoints = 0;
+                                isFirstPurchase = true;
+                                $('#memberDetails').removeClass('d-none')
+                                    .html('New member will be registered with first purchase');
+                                $('#usePointsCheck').addClass('d-none');
+                                $('#usePoints').prop('checked', false);
+                            }
+                            updateTotals();
+                        } catch (e) {
+                            console.error('Failed to parse response:', e);
+                            alert('Error checking member status');
+                        }
+                    }).fail(function(jqXHR, textStatus, errorThrown) {
+                        console.error('AJAX error:', textStatus, errorThrown);
+                        alert('Failed to check member status');
+                    });
+                }
+            });
+
+            // Points usage toggle
+            $('#usePoints').change(function() {
+                updateTotals();
+            });
 
             // Fetch and populate product dropdown on page load
             $.get('fetch_products.php', function(products) {
@@ -180,70 +286,131 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role_id'] != 2) {
                 } else {
                     // Fetch and add new product if it doesn't exist
                     $.post('transaction.php', { action: 'add', product_id: productId }, function(response) {
-                        const data = JSON.parse(response);
-                        if (data.error) {
-                            alert(data.error);
-                        } else {
-                            transactionItems.push({ ...data, quantity: 1 });
-                            renderItems();
+                        try {
+                            const data = typeof response === 'string' ? JSON.parse(response) : response;
+                            if (data.error) {
+                                alert(data.error);
+                            } else {
+                                transactionItems.push({ ...data, quantity: 1 });
+                                renderItems();
+                            }
+                        } catch (e) {
+                            console.error('Failed to parse response:', e);
+                            alert('Error adding item to transaction');
                         }
+                    }).fail(function(jqXHR, textStatus, errorThrown) {
+                        console.error('AJAX error:', textStatus, errorThrown);
+                        alert('Failed to add item to transaction');
                     });
                 }
             });
 
             // Process transaction on button click
             $('#processTransaction').click(function() {
-                const discount = parseFloat($('#discount').val()) || 0;
+                const isMember = $('#isMember').is(':checked');
+                const phoneNumber = $('#phoneNumber').val();
+                const usePoints = $('#usePoints').is(':checked');
+                const additionalDiscount = parseFloat($('#discount').val()) || 0;
                 const amountPaid = parseFloat($('#amountPaid').val()) || 0;
+                const subtotal = calculateSubtotal();
+                const pointsDiscount = usePoints ? Math.min(memberPoints, subtotal) : 0;
+                const finalTotal = subtotal - pointsDiscount - additionalDiscount;
 
-                $.post('transaction.php', { 
-                    action: 'process', 
-                    items: transactionItems, 
-                    discount, 
-                    amount_paid: amountPaid 
-                }, function(response) {
-                    const data = JSON.parse(response);
-                    if (data.error) {
-                        alert(data.error);
-                    } else {
-                        alert('Transaction processed successfully!');
-                        // Reset transaction after successful processing
-                        transactionItems = [];
-                        renderItems();
+                if (amountPaid < finalTotal) {
+                    alert('Insufficient payment amount');
+                    return;
+                }
+
+                if (isMember && !phoneNumber) {
+                    alert('Please enter phone number for member');
+                    return;
+                }
+
+                if (transactionItems.length === 0) {
+                    alert('Please add items to the transaction');
+                    return;
+                }
+
+                $.ajax({
+                    url: 'transaction.php',
+                    method: 'POST',
+                    data: { 
+                        action: 'process', 
+                        items: transactionItems, 
+                        is_member: isMember,
+                        phone_number: phoneNumber,
+                        use_points: usePoints,
+                        points_used: pointsDiscount,
+                        additional_discount: additionalDiscount,
+                        amount_paid: amountPaid,
+                        subtotal: subtotal
+                    },
+                    success: function(response) {
+                        try {
+                            if (typeof response === 'string') {
+                                response = JSON.parse(response);
+                            }
+                            
+                            if (response.error) {
+                                alert('Error: ' + response.error);
+                            } else {
+                                alert('Transaction processed successfully!' + 
+                                    (isMember ? '\nPoints earned: $' + response.points_earned.toFixed(2) : ''));
+                                // Reset transaction after successful processing
+                                transactionItems = [];
+                                $('#isMember').prop('checked', false).trigger('change');
+                                $('#discount').val('');
+                                $('#amountPaid').val('');
+                                renderItems();
+                            }
+                        } catch (e) {
+                            console.error('JSON parsing error:', e);
+                            alert('Error processing transaction. Please try again.');
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        console.error('AJAX error:', status, error);
+                        alert('Failed to process transaction. Please try again.');
                     }
                 });
             });
 
-            // Update totals when discount or amount paid changes
-            $(document).on('input', '#discount, #amountPaid', function() {
-                const discount = parseFloat($('#discount').val()) || 0;
+            // Calculate subtotal
+            function calculateSubtotal() {
+                return transactionItems.reduce((total, item) => {
+                    return total + (parseFloat(item.price) * item.quantity);
+                }, 0);
+            }
+
+            // Update all totals
+            function updateTotals() {
+                const subtotal = calculateSubtotal();
+                const usePoints = $('#usePoints').is(':checked');
+                const pointsDiscount = usePoints ? Math.min(memberPoints, subtotal) : 0;
+                const additionalDiscount = parseFloat($('#discount').val()) || 0;
+                const finalTotal = Math.max(0, subtotal - pointsDiscount - additionalDiscount);
                 const amountPaid = parseFloat($('#amountPaid').val()) || 0;
+                const change = amountPaid - finalTotal;
 
-                let total = 0;
-                transactionItems.forEach(item => {
-                    const price = parseFloat(item.price) || 0;
-                    total += price * item.quantity;
-                });
+                $('#subtotalAmount').text(`$${subtotal.toFixed(2)}`);
+                $('#pointsDiscount').text(`$${pointsDiscount.toFixed(2)}`);
+                $('#additionalDiscount').text(`$${additionalDiscount.toFixed(2)}`);
+                $('#totalAmount').text(`$${finalTotal.toFixed(2)}`);
+                $('#changeGiven').text(change >= 0 ? 
+                    `$${change.toFixed(2)}` : 'Insufficient amount');
+            }
 
-                const totalAfterDiscount = total - discount;
-                const changeGiven = amountPaid - totalAfterDiscount;
-
-                // Update displayed totals
-                $('#totalAmount').text(`$${totalAfterDiscount.toFixed(2)}`);
-                $('#changeGiven').text(changeGiven >= 0 ? 
-                    `$${changeGiven.toFixed(2)}` : 'Insufficient amount');
-            });
+            // Handle discount and amount paid changes
+            $(document).on('input', '#discount, #amountPaid', updateTotals);
 
             // Render transaction items table
             function renderItems() {
                 const $tbody = $('#transactionItems');
                 $tbody.empty();
-                let total = 0;
 
                 transactionItems.forEach((item, index) => {
                     const price = parseFloat(item.price) || 0;
                     const subtotal = price * item.quantity;
-                    total += subtotal;
 
                     $tbody.append(`
                         <tr>
@@ -255,22 +422,18 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role_id'] != 2) {
                             <td>${item.name}</td>
                             <td>${price.toFixed(2)}</td>
                             <td>
-                                <input type="number" class="form-control quantity-input" data-index="${index}" value="${item.quantity}" min="1" style="width: 80px">
+                                <input type="number" class="form-control quantity-input" data-index="${index}" 
+                                       value="${item.quantity}" min="1" style="width: 80px">
                             </td>
                             <td>${subtotal.toFixed(2)}</td>
-                            <td><button class="btn btn-danger btn-sm" onclick="removeItem(${index})">Remove</button></td>
+                            <td>
+                                <button class="btn btn-danger btn-sm" onclick="removeItem(${index})">Remove</button>
+                            </td>
                         </tr>
                     `);
                 });
 
-                // Update totals after rendering
-                $('#totalAmount').text(`$${total.toFixed(2)}`);
-                const discount = parseFloat($('#discount').val()) || 0;
-                const amountPaid = parseFloat($('#amountPaid').val()) || 0;
-                const totalAfterDiscount = total - discount;
-                const changeGiven = amountPaid - totalAfterDiscount;
-                $('#changeGiven').text(changeGiven >= 0 ? 
-                    `$${changeGiven.toFixed(2)}` : 'Insufficient amount');
+                updateTotals();
             }
 
             // Handle quantity changes
