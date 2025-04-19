@@ -137,8 +137,13 @@ require_once '../../include/header.php';
 ?>
 
 <div class="row">
-    <div class="col-md-12">
+    <div class="col-md-8">
         <h1 class="page-title"><i class="fas fa-box-open me-2"></i>Product Management</h1>
+    </div>
+    <div class="col-md-4 text-end">
+        <a href="export_products.php" class="btn btn-success">
+            <i class="fas fa-file-excel me-2"></i>Export to Excel
+        </a>
     </div>
 </div>
 

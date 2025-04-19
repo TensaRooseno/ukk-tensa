@@ -16,6 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // Add new member
     if (isset($_POST['add_member'])) {
         $phone_number = mysqli_real_escape_string($conn, $_POST['phone_number']);
+        $name = mysqli_real_escape_string($conn, $_POST['name']);
         
         // Check if phone number already exists
         $check_query = "SELECT * FROM members WHERE phone_number = '$phone_number'";
@@ -24,7 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         if (mysqli_num_rows($check_result) > 0) {
             redirectWithMessage($_SERVER['PHP_SELF'], "Phone number already exists", 'error');
         } else {
-            $query = "INSERT INTO members (phone_number, points) VALUES ('$phone_number', 0)";
+            $query = "INSERT INTO members (phone_number, name, points) VALUES ('$phone_number', '$name', 0)";
             if (mysqli_query($conn, $query)) {
                 redirectWithMessage($_SERVER['PHP_SELF'], "Member with phone number $phone_number added successfully", 'success');
             } else {
@@ -37,6 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['update_member'])) {
         $member_id = intval($_POST['member_id']);
         $phone_number = mysqli_real_escape_string($conn, $_POST['phone_number']);
+        $name = mysqli_real_escape_string($conn, $_POST['name']);
         $points = floatval($_POST['points']);
         
         // Check if phone number already exists for other members
@@ -46,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         if (mysqli_num_rows($check_result) > 0) {
             redirectWithMessage($_SERVER['PHP_SELF'], "Phone number already exists for another member", 'error');
         } else {
-            $query = "UPDATE members SET phone_number = '$phone_number', points = '$points' WHERE id = $member_id";
+            $query = "UPDATE members SET phone_number = '$phone_number', name = '$name', points = '$points' WHERE id = $member_id";
             if (mysqli_query($conn, $query)) {
                 redirectWithMessage($_SERVER['PHP_SELF'], "Member updated successfully", 'success');
             } else {
@@ -123,6 +125,12 @@ require_once '../../include/header.php';
                                value="<?php echo $edit_mode ? $edit_member['phone_number'] : ''; ?>">
                     </div>
                     
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Member Name:</label>
+                        <input type="text" id="name" name="name" class="form-control" required 
+                               value="<?php echo $edit_mode ? $edit_member['name'] : ''; ?>">
+                    </div>
+                    
                     <?php if ($edit_mode): ?>
                         <div class="mb-3">
                             <label for="points" class="form-label">Points:</label>
@@ -173,6 +181,7 @@ require_once '../../include/header.php';
                             <tr>
                                 <th>ID</th>
                                 <th>Phone Number</th>
+                                <th>Name</th>
                                 <th>Points</th>
                                 <th>First Purchase</th>
                                 <th>Member Since</th>
@@ -185,22 +194,28 @@ require_once '../../include/header.php';
                                     <tr>
                                         <td><?php echo $member['id']; ?></td>
                                         <td><?php echo $member['phone_number']; ?></td>
+                                        <td><?php echo $member['name'] ?: 'Not provided'; ?></td>
                                         <td>
                                             <span class="badge <?php echo $member['points'] > 0 ? 'bg-success' : 'bg-secondary'; ?>">
                                                 <?php echo number_format($member['points'], 2); ?>
                                             </span>
                                         </td>
-                                        <td><?php echo $member['first_purchase_date'] ? date('Y-m-d', strtotime($member['first_purchase_date'])) : '-'; ?></td>
+                                        <td>
+                                            <?php if ($member['first_purchase_date']): ?>
+                                                <?php echo date('Y-m-d', strtotime($member['first_purchase_date'])); ?>
+                                            <?php else: ?>
+                                                <span class="badge bg-warning">No purchase yet</span>
+                                            <?php endif; ?>
+                                        </td>
                                         <td><?php echo date('Y-m-d', strtotime($member['created_at'])); ?></td>
                                         <td>
                                             <div class="btn-group btn-group-sm">
                                                 <a href="?edit=<?php echo $member['id']; ?>" class="btn btn-primary">
                                                     <i class="fas fa-edit"></i>
                                                 </a>
-                                                
                                                 <form method="POST" action="" style="display: inline;">
                                                     <input type="hidden" name="member_id" value="<?php echo $member['id']; ?>">
-                                                    <button type="submit" name="delete_member" class="btn btn-danger"
+                                                    <button type="submit" name="delete_member" class="btn btn-danger" 
                                                             onclick="return confirm('Are you sure you want to delete this member?');">
                                                         <i class="fas fa-trash"></i>
                                                     </button>
@@ -211,7 +226,7 @@ require_once '../../include/header.php';
                                 <?php endwhile; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="6" class="text-center">No members found</td>
+                                    <td colspan="7" class="text-center">No members found</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>

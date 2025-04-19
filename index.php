@@ -10,7 +10,7 @@ if (!isLoggedIn()) {
 
 // Simple redirect to the appropriate dashboard based on role
 if (hasRole('admin')) {
-    header("Location: pages/admin/products.php");
+    header("Location: pages/admin/dashboard.php");
 } else {
     header("Location: pages/cashier/pos.php");
 }

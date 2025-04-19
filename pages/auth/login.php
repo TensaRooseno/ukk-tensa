@@ -49,37 +49,115 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Login</title>
+    <title>POS System Login</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
     <style>
-        body { font-family: Arial; margin: 20px; }
-        form { max-width: 300px; margin: 0 auto; }
-        label { display: block; margin: 10px 0 5px; }
-        input { width: 100%; padding: 5px; margin-bottom: 10px; }
-        .error { color: red; margin-bottom: 10px; }
-        button { padding: 8px; background: #007bff; color: white; border: none; width: 100%; }
+        body {
+            background-color: #f8f9fa;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-container {
+            max-width: 450px;
+            width: 100%;
+            padding: 15px;
+        }
+        .card {
+            border: none;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+        .card-header {
+            background-color: #4e73df;
+            color: white;
+            border-radius: 10px 10px 0 0 !important;
+            padding: 20px;
+            text-align: center;
+            border-bottom: none;
+        }
+        .card-body {
+            padding: 40px 30px;
+        }
+        .form-floating {
+            margin-bottom: 20px;
+        }
+        .btn-primary {
+            background-color: #4e73df;
+            border-color: #4e73df;
+            padding: 12px;
+            font-weight: 600;
+            width: 100%;
+        }
+        .btn-primary:hover {
+            background-color: #2e59d9;
+            border-color: #2e59d9;
+        }
+        .app-name {
+            font-size: 24px;
+            font-weight: 700;
+        }
+        .error-message {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .app-logo {
+            font-size: 3rem;
+            margin-bottom: 10px;
+            color: white;
+        }
     </style>
 </head>
 <body>
-    <h1 style="text-align: center;">Cashier App Login</h1>
+    <div class="login-container">
+        <div class="card">
+            <div class="card-header">
+                <div class="app-logo">
+                    <i class="fas fa-cash-register"></i>
+                </div>
+                <div class="app-name">Cashier app</div>
+                <p class="mb-0">Please sign in to continue</p>
+            </div>
+            <div class="card-body">
+                <?php if (isset($error)): ?>
+                    <div class="error-message">
+                        <i class="fas fa-exclamation-circle me-2"></i><?php echo $error; ?>
+                    </div>
+                <?php endif; ?>
+                
+                <form method="POST" action="">
+                    <div class="form-floating">
+                        <input type="text" class="form-control" id="username" name="username" placeholder="Username" required>
+                        <label for="username"><i class="fas fa-user me-2"></i>Username</label>
+                    </div>
+                    
+                    <div class="form-floating">
+                        <input type="password" class="form-control" id="password" name="password" placeholder="Password" required>
+                        <label for="password"><i class="fas fa-lock me-2"></i>Password</label>
+                    </div>
+                    
+                    <div class="d-grid gap-2 mt-4">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-sign-in-alt me-2"></i>Login
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div class="text-center mt-3 text-muted">
+            <small>&copy; <?php echo date('Y'); ?> POS Cashier System</small>
+        </div>
+    </div>
     
-    <form method="POST" action="">
-        <?php if (isset($error)): ?>
-            <div class="error"><?php echo $error; ?></div>
-        <?php endif; ?>
-        
-        <div>
-            <label for="username">Username:</label>
-            <input type="text" id="username" name="username" required>
-        </div>
-        
-        <div>
-            <label for="password">Password:</label>
-            <input type="password" id="password" name="password" required>
-        </div>
-        
-        <div>
-            <button type="submit">Login</button>
-        </div>
-    </form>
+    <!-- Bootstrap Bundle with Popper -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

@@ -252,6 +252,7 @@ if (session_status() == PHP_SESSION_NONE) {
         <div class="nav-menu">
             <?php if (isset($_SESSION['role']) && hasRole('admin')): ?>
                 <!-- Admin Navigation -->
+                <a href="/ukk/pages/admin/dashboard.php"><i class="fas fa-tachometer-alt me-2"></i>Dashboard</a>
                 <a href="/ukk/pages/admin/users.php"><i class="fas fa-users me-2"></i>Users</a>
                 <a href="/ukk/pages/admin/products.php"><i class="fas fa-box me-2"></i>Products</a>
                 <a href="/ukk/pages/admin/members.php"><i class="fas fa-id-card me-2"></i>Members</a>

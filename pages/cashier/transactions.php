@@ -7,8 +7,21 @@ if (!isLoggedIn() || hasRole('admin')) {
     exit;
 }
 
-// Get transactions by this cashier
+// Get today's date in Y-m-d format
+$today = date('Y-m-d');
+
+// Get today's transactions by this cashier
 $user_id = $_SESSION['user_id'];
+$today_query = "SELECT COUNT(*) as count, SUM(total_amount - discount_amount) as total 
+               FROM transactions 
+               WHERE cashier_id = $user_id 
+               AND DATE(date_time) = '$today'";
+$today_result = mysqli_query($conn, $today_query);
+$today_data = mysqli_fetch_assoc($today_result);
+$transactions_today = $today_data['count'];
+$total_today = $today_data['total'] ?: 0;
+
+// Get transactions by this cashier
 $query = "SELECT t.*, m.phone_number as member_phone 
           FROM transactions t 
           LEFT JOIN members m ON t.member_id = m.id
@@ -22,6 +35,28 @@ require_once '../../include/header.php';
 <div class="row">
     <div class="col-md-12">
         <h1 class="page-title"><i class="fas fa-receipt me-2"></i>My Transactions</h1>
+    </div>
+</div>
+
+<!-- Today's Transactions Summary Card -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card bg-primary text-white">
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-9">
+                        <h4 class="mb-0">Today's Transactions (<?php echo date('F d, Y'); ?>)</h4>
+                        <p class="mb-0">Summary of your transactions for today</p>
+                    </div>
+                    <div class="col-md-3 text-end">
+                        <div class="d-flex flex-column align-items-end">
+                            <h2 class="mb-0"><?php echo $transactions_today; ?> <small>transactions</small></h2>
+                            <h3 class="mb-0">$<?php echo number_format($total_today, 2); ?></h3>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 

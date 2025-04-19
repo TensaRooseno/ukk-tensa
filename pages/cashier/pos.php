@@ -62,7 +62,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $_SESSION['member'] = mysqli_fetch_assoc($result);
             } else {
                 // No member found, create new member
-                $query = "INSERT INTO members (phone_number, points) VALUES ('$phone', 0)";
+                $member_name = isset($_POST['member_name']) ? mysqli_real_escape_string($conn, $_POST['member_name']) : 'Unknown';
+                $query = "INSERT INTO members (phone_number, name, points) VALUES ('$phone', '$member_name', 0)";
                 if (mysqli_query($conn, $query)) {
                     $member_id = mysqli_insert_id($conn);
                     $query = "SELECT * FROM members WHERE id = $member_id";
@@ -390,21 +391,32 @@ require_once '../../include/header.php';
                             </button>
                             <?php endif; ?>
                         </div>
-                        
-                        <?php if (isset($_SESSION['member']) && $_SESSION['member']): ?>
-                        <div class="alert alert-info mt-2">
-                            <span>
-                                <i class="fas fa-star me-1"></i>
-                                <strong>Total Points:</strong> <?php echo number_format($_SESSION['member']['points'], 2); ?>
-                            </span>
-                            <?php if (!$_SESSION['member']['first_purchase_date']): ?>
-                            <p class="text-muted mt-1"><i class="fas fa-info-circle me-1"></i> This is the member's first purchase. Points earned from this transaction can only be used in future transactions.</p>
-                            <?php else: ?>
-                            <p class="text-muted mt-1"><i class="fas fa-info-circle me-1"></i> Points earned from this transaction can only be used in future transactions.</p>
-                            <?php endif; ?>
-                        </div>
+                    </div>
+                    
+                    <div class="mb-3" id="member-name-container" <?php echo (isset($_SESSION['member']) && $_SESSION['member']) ? 'style="display: none;"' : ''; ?>>
+                        <label for="member-name" class="form-label">Member Name:</label>
+                        <input type="text" id="member-name" name="member_name" class="form-control" placeholder="Enter member name">
+                        <small class="form-text text-muted">Only required for new members</small>
+                    </div>
+                    
+                    <?php if (isset($_SESSION['member']) && $_SESSION['member']): ?>
+                    <div class="alert alert-info mt-2">
+                        <span>
+                            <i class="fas fa-star me-1"></i>
+                            <strong>Member:</strong> <?php echo $_SESSION['member']['name'] ? $_SESSION['member']['name'] : 'Unknown'; ?>
+                        </span>
+                        <br>
+                        <span>
+                            <i class="fas fa-star me-1"></i>
+                            <strong>Total Points:</strong> <?php echo number_format($_SESSION['member']['points'], 2); ?>
+                        </span>
+                        <?php if (!$_SESSION['member']['first_purchase_date']): ?>
+                        <p class="text-muted mt-1"><i class="fas fa-info-circle me-1"></i> This is the member's first purchase. Points earned from this transaction can only be used in future transactions.</p>
+                        <?php else: ?>
+                        <p class="text-muted mt-1"><i class="fas fa-info-circle me-1"></i> Points earned from this transaction can only be used in future transactions.</p>
                         <?php endif; ?>
                     </div>
+                    <?php endif; ?>
                     
                     <input type="hidden" name="product_name" id="product_name">
                     <button type="submit" name="add_to_cart" id="add_to_cart_btn" class="btn btn-primary w-100">
