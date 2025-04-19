@@ -20,9 +20,28 @@ $spreadsheet = new Spreadsheet();
 $sheet = $spreadsheet->getActiveSheet();
 $sheet->setTitle('Users');
 
-// Set headers
+// Add title
+$sheet->setCellValue('A1', 'User Data Export');
+$sheet->mergeCells('A1:D1');
+
+// Title style
+$titleStyle = [
+    'font' => [
+        'bold' => true,
+        'size' => 16,
+        'color' => ['rgb' => '000000'],
+    ],
+    'alignment' => [
+        'horizontal' => Alignment::HORIZONTAL_CENTER,
+        'vertical' => Alignment::VERTICAL_CENTER,
+    ],
+];
+$sheet->getStyle('A1:D1')->applyFromArray($titleStyle);
+$sheet->getRowDimension(1)->setRowHeight(30);
+
+// Set headers (now in row 2)
 $headers = ['ID', 'Username', 'Email', 'Role'];
-$sheet->fromArray($headers, NULL, 'A1');
+$sheet->fromArray($headers, NULL, 'A2');
 
 // Style headers
 $headerStyle = [
@@ -45,7 +64,7 @@ $headerStyle = [
     ],
 ];
 
-$sheet->getStyle('A1:D1')->applyFromArray($headerStyle);
+$sheet->getStyle('A2:D2')->applyFromArray($headerStyle);
 
 // Get all users with their roles
 $query = "SELECT u.user_id, u.username, u.email, r.role_name 
@@ -55,7 +74,7 @@ $query = "SELECT u.user_id, u.username, u.email, r.role_name
 $users = mysqli_query($conn, $query);
 
 // Add data rows
-$row = 2;
+$row = 3; // Start from row 3 since we now have a title row
 while ($user = mysqli_fetch_assoc($users)) {
     // Add to spreadsheet
     $sheet->setCellValue('A' . $row, $user['user_id']);
@@ -84,13 +103,13 @@ $dataStyle = [
 ];
 
 $lastRow = $row - 1;
-if ($lastRow > 1) {
-    $sheet->getStyle('A2:D' . $lastRow)->applyFromArray($dataStyle);
+if ($lastRow > 2) {
+    $sheet->getStyle('A3:D' . $lastRow)->applyFromArray($dataStyle);
 }
 
 // Center the ID and Role columns
-$sheet->getStyle('A2:A' . $lastRow)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-$sheet->getStyle('D2:D' . $lastRow)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+$sheet->getStyle('A3:A' . $lastRow)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+$sheet->getStyle('D3:D' . $lastRow)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
 
 // Set the filename
 $fileName = 'Users_Export_' . date('Y-m-d') . '.xlsx';

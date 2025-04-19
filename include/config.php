@@ -5,6 +5,22 @@ $username = "root";
 $password = "";
 $database = "cashier_app"; // Using the existing database name
 
+// Error handling configuration
+// Set custom error handler to suppress errors from vendor directory
+set_error_handler(function($errno, $errstr, $errfile, $errline) {
+    // Check if error is from vendor directory
+    if (strpos($errfile, 'vendor') !== false) {
+        // Suppress errors from vendor directory
+        return true;
+    }
+    // For other errors, use default error handler
+    return false;
+});
+
+// You can also set general error reporting level
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_STRICT);
+ini_set('display_errors', 1);
+
 // Create database connection
 $conn = mysqli_connect($host, $username, $password, $database);
 

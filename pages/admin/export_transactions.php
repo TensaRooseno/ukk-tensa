@@ -20,9 +20,28 @@ $spreadsheet = new Spreadsheet();
 $sheet = $spreadsheet->getActiveSheet();
 $sheet->setTitle('Transactions');
 
-// Set headers
-$headers = ['ID', 'Cashier', 'Date & Time', 'Member', 'Total Amount ($)', 'Discount ($)', 'Final Amount ($)', 'Points Used', 'Points Earned'];
-$sheet->fromArray($headers, NULL, 'A1');
+// Add title
+$sheet->setCellValue('A1', 'Cashier Transactions Export Data');
+$sheet->mergeCells('A1:M1');
+
+// Title style
+$titleStyle = [
+    'font' => [
+        'bold' => true,
+        'size' => 16,
+        'color' => ['rgb' => '000000'],
+    ],
+    'alignment' => [
+        'horizontal' => Alignment::HORIZONTAL_CENTER,
+        'vertical' => Alignment::VERTICAL_CENTER,
+    ],
+];
+$sheet->getStyle('A1:M1')->applyFromArray($titleStyle);
+$sheet->getRowDimension(1)->setRowHeight(30);
+
+// Set columns for transaction data (not including products)
+$headers = ['Transaction ID', 'Cashier', 'Date & Time', 'Member', 'Total Amount ($)', 'Discount ($)', 'Final Amount ($)', 'Points Used', 'Points Earned', 'Product Name', 'Quantity', 'Price ($)', 'Subtotal ($)'];
+$sheet->fromArray($headers, NULL, 'A2');
 
 // Style headers
 $headerStyle = [
@@ -45,7 +64,7 @@ $headerStyle = [
     ],
 ];
 
-$sheet->getStyle('A1:I1')->applyFromArray($headerStyle);
+$sheet->getStyle('A2:M2')->applyFromArray($headerStyle);
 
 // Get all transactions with details
 $query = "SELECT t.*, u.username, m.phone_number as member_phone 
@@ -56,7 +75,7 @@ $query = "SELECT t.*, u.username, m.phone_number as member_phone
 $transactions = mysqli_query($conn, $query);
 
 // Add data rows
-$row = 2;
+$row = 3;
 while ($transaction = mysqli_fetch_assoc($transactions)) {
     // Calculate final amount
     $finalAmount = $transaction['total_amount'] - $transaction['discount_amount'];
@@ -74,22 +93,68 @@ while ($transaction = mysqli_fetch_assoc($transactions)) {
     // Format date
     $formattedDate = date('Y-m-d H:i', strtotime($transaction['date_time']));
     
-    // Add to spreadsheet
-    $sheet->setCellValue('A' . $row, $transaction['transaction_id']);
-    $sheet->setCellValue('B' . $row, $transaction['username']);
-    $sheet->setCellValue('C' . $row, $formattedDate);
-    $sheet->setCellValue('D' . $row, $memberInfo);
-    $sheet->setCellValue('E' . $row, number_format($transaction['total_amount'], 2));
-    $sheet->setCellValue('F' . $row, number_format($transaction['discount_amount'], 2));
-    $sheet->setCellValue('G' . $row, number_format($finalAmount, 2));
-    $sheet->setCellValue('H' . $row, $transaction['points_used'] ?? 0);
-    $sheet->setCellValue('I' . $row, $transaction['points_earned'] ?? 0);
+    // Process products
+    $productCount = mysqli_num_rows($items);
     
-    $row++;
+    if ($productCount == 0) {
+        // If no products, just add the transaction row with empty product columns
+        $sheet->setCellValue('A' . $row, $transaction['transaction_id']);
+        $sheet->setCellValue('B' . $row, $transaction['username']);
+        $sheet->setCellValue('C' . $row, $formattedDate);
+        $sheet->setCellValue('D' . $row, $memberInfo);
+        $sheet->setCellValue('E' . $row, number_format($transaction['total_amount'], 2));
+        $sheet->setCellValue('F' . $row, number_format($transaction['discount_amount'], 2));
+        $sheet->setCellValue('G' . $row, number_format($finalAmount, 2));
+        $sheet->setCellValue('H' . $row, $transaction['points_used'] ?? 0);
+        $sheet->setCellValue('I' . $row, $transaction['points_earned'] ?? 0);
+        $row++;
+    } else {
+        // For each product in the transaction, create a new row with all transaction data
+        $firstProduct = true;
+        while ($item = mysqli_fetch_assoc($items)) {
+            // For the first product, include all transaction details
+            if ($firstProduct) {
+                $sheet->setCellValue('A' . $row, $transaction['transaction_id']);
+                $sheet->setCellValue('B' . $row, $transaction['username']);
+                $sheet->setCellValue('C' . $row, $formattedDate);
+                $sheet->setCellValue('D' . $row, $memberInfo);
+                $sheet->setCellValue('E' . $row, number_format($transaction['total_amount'], 2));
+                $sheet->setCellValue('F' . $row, number_format($transaction['discount_amount'], 2));
+                $sheet->setCellValue('G' . $row, number_format($finalAmount, 2));
+                $sheet->setCellValue('H' . $row, $transaction['points_used'] ?? 0);
+                $sheet->setCellValue('I' . $row, $transaction['points_earned'] ?? 0);
+                $firstProduct = false;
+            } else {
+                // For subsequent products, just repeat the transaction ID (helps with grouping)
+                $sheet->setCellValue('A' . $row, $transaction['transaction_id']);
+                
+                // Merge cells for transaction data across product rows to visually group them
+                if ($productCount > 1 && $row > 3) {
+                    // Don't merge if this is the first row
+                    $previousRow = $row - 1;
+                    $previousTransactionId = $sheet->getCell('A' . $previousRow)->getValue();
+                    
+                    // If the previous row has the same transaction ID, it's part of the same transaction
+                    if ($previousTransactionId == $transaction['transaction_id']) {
+                        // Skip other transaction columns to leave them empty (cleaner look)
+                    }
+                }
+            }
+            
+            // Add product details on each row
+            $subtotal = $item['quantity'] * $item['price_per_unit'];
+            $sheet->setCellValue('J' . $row, $item['product_name']);
+            $sheet->setCellValue('K' . $row, $item['quantity']);
+            $sheet->setCellValue('L' . $row, number_format($item['price_per_unit'], 2));
+            $sheet->setCellValue('M' . $row, number_format($subtotal, 2));
+            
+            $row++;
+        }
+    }
 }
 
 // Auto size columns
-foreach(range('A', 'I') as $col) {
+foreach(range('A', 'M') as $col) {
     $sheet->getColumnDimension($col)->setAutoSize(true);
 }
 
@@ -104,10 +169,11 @@ $dataStyle = [
         'vertical' => Alignment::VERTICAL_CENTER,
     ],
 ];
-$sheet->getStyle('A2:I' . ($row - 1))->applyFromArray($dataStyle);
+$sheet->getStyle('A3:M' . ($row - 1))->applyFromArray($dataStyle);
 
 // Money columns right-aligned
-$sheet->getStyle('E2:I' . ($row - 1))->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+$sheet->getStyle('E3:I' . ($row - 1))->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+$sheet->getStyle('K3:M' . ($row - 1))->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
 
 // Set file name
 $fileName = 'Transactions_Export_' . date('Y-m-d_H-i-s') . '.xlsx';
