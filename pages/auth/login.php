@@ -153,7 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             </div>
         </div>
         <div class="text-center mt-3 text-muted">
-            <small>&copy; <?php echo date('Y'); ?> POS Cashier System</small>
+            <small>&copy; <?php echo date('Y'); ?> Cashier System</small>
         </div>
     </div>
     
