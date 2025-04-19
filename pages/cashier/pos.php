@@ -151,6 +151,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             exit;
         }
         
+        // Get paid amount
+        $paid_amount = isset($_POST['paid_amount']) ? floatval($_POST['paid_amount']) : 0;
+        
         // Points related variables
         $use_points = isset($_POST['use_points']) && $_SESSION['member'] && $_SESSION['member']['points'] > 0;
         $member_id = isset($_SESSION['member']) ? $_SESSION['member']['id'] : null;
@@ -170,19 +173,35 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $discount_amount = 0;
             
             if ($use_points && isset($_SESSION['member'])) {
-                // Use all available points (up to the total amount)
-                $points_used = $_SESSION['member']['points'];
-                $discount_amount = $points_used * $POINTS_VALUE;
-                
-                // Make sure discount doesn't exceed total
-                if ($discount_amount > $total_amount) {
-                    $discount_amount = $total_amount;
-                    $points_used = $total_amount / $POINTS_VALUE;
+                // Only allow points to be used if the member has already made their first purchase
+                if ($_SESSION['member']['first_purchase_date']) {
+                    // Only use points that are available (not earned in the current transaction)
+                    $available_points = $_SESSION['member']['points'];
+                    $points_used = $available_points;
+                    $discount_amount = $points_used * $POINTS_VALUE;
+                    
+                    // Make sure discount doesn't exceed total
+                    if ($discount_amount > $total_amount) {
+                        $discount_amount = $total_amount;
+                        $points_used = $total_amount / $POINTS_VALUE;
+                    }
+                } else {
+                    // First purchase - cannot use points yet
+                    $points_used = 0;
+                    $discount_amount = 0;
                 }
             }
             
             // Calculate final total after discount
             $final_total = $total_amount - $discount_amount;
+            
+            // Calculate change amount
+            $change_amount = $paid_amount - $final_total;
+            
+            // Validate payment
+            if ($paid_amount < $final_total) {
+                throw new Exception("Paid amount must be at least equal to the final total amount.");
+            }
             
             // Calculate points earned (only on the paid amount)
             $points_earned = $final_total * $POINTS_RATE;
@@ -191,11 +210,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $cashier_id = $_SESSION['user_id'];
             $query = "INSERT INTO transactions (
                         cashier_id, total_amount, discount_amount, 
-                        member_id, points_used, points_earned
+                        member_id, points_used, points_earned,
+                        paid_amount, change_amount
                       ) VALUES (
                         '$cashier_id', '$total_amount', '$discount_amount',
                         " . ($member_id ? "'$member_id'" : "NULL") . ", 
-                        '$points_used', '$points_earned'
+                        '$points_used', '$points_earned',
+                        '$paid_amount', '$change_amount'
                       )";
             $result = mysqli_query($conn, $query);
             
@@ -282,134 +303,271 @@ $products = mysqli_query($conn, $products_query);
 require_once '../../include/header.php';
 ?>
 
-<div class="row">
+<div class="row mb-4">
     <div class="col-md-12">
-        <h1>Point of Sale</h1>
+        <h1><i class="fas fa-cash-register me-2"></i>Transactions</h1>
     </div>
 </div>
 
 <div class="row">
     <!-- Add Product Form -->
     <div class="col-md-4">
-        <h3>Add Product</h3>
-        <form method="POST" action="">
-            <div>
-                <label>Select Product:</label>
-                <select name="product_id" required onchange="updatePrice()">
-                    <option value="">-- Select Product --</option>
-                    <?php 
-                    // Reset the result pointer to the beginning
-                    mysqli_data_seek($products, 0);
-                    while ($row = mysqli_fetch_assoc($products)): 
-                    ?>
-                        <option value="<?php echo $row['product_id']; ?>" 
-                                data-price="<?php echo $row['price']; ?>"
-                                data-name="<?php echo $row['name']; ?>"
-                                data-stock="<?php echo $row['stock_quantity']; ?>">
-                            <?php echo $row['name']; ?> ($<?php echo $row['price']; ?>) - Stock: <?php echo $row['stock_quantity']; ?>
-                        </option>
-                    <?php endwhile; ?>
-                </select>
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h3 class="mb-0"><i class="fas fa-cart-plus me-2"></i>Add Product</h3>
             </div>
-            
-            <div>
-                <label>Price:</label>
-                <input type="number" name="price" id="price" readonly>
-            </div>
-            
-            <div>
-                <label>Available Stock:</label>
-                <input type="text" id="stock" readonly>
-            </div>
-            
-            <div>
-                <label>Quantity:</label>
-                <input type="number" name="quantity" id="quantity" min="1" value="1" onchange="validateQuantity()">
-            </div>
-            
-            <div>
-                <label>Subtotal:</label>
-                <input type="text" id="subtotal" readonly>
-            </div>
+            <div class="card-body">
+                <form method="POST" action="">
+                    <div class="mb-3">
+                        <label for="product-select" class="form-label">Select Product:</label>
+                        <select id="product-select" name="product_id" required class="form-select" onchange="updateProduct()">
+                            <option value="">-- Select Product --</option>
+                            <?php 
+                            // Reset the result pointer to the beginning
+                            mysqli_data_seek($products, 0);
+                            while ($row = mysqli_fetch_assoc($products)): 
+                            ?>
+                                <option value="<?php echo $row['product_id']; ?>" 
+                                        data-price="<?php echo $row['price']; ?>"
+                                        data-name="<?php echo $row['name']; ?>"
+                                        data-stock="<?php echo $row['stock_quantity']; ?>"
+                                        data-image="<?php echo $row['image_path']; ?>">
+                                    <?php echo $row['name']; ?> ($<?php echo $row['price']; ?>) - Stock: <?php echo $row['stock_quantity']; ?>
+                                </option>
+                            <?php endwhile; ?>
+                        </select>
+                    </div>
+                    
+                    <!-- Product Image Preview -->
+                    <div id="product-image-container" class="product-img-container" style="display: none;">
+                        <img id="product-image-preview" src="" alt="Product Image" class="product-img" style="max-width: 150px; max-height: 150px;">
+                        <p id="no-image-text" class="text-muted" style="display: none;">
+                            <i class="fas fa-image me-2"></i>No image available
+                        </p>
+                    </div>
 
-            <div>
-                <label>Member Phone Number:</label>
-                <input type="text" name="phone_number" value="<?php echo isset($_SESSION['member']) ? $_SESSION['member']['phone_number'] : ''; ?>" 
-                       placeholder="Enter phone number">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="price" class="form-label">Price:</label>
+                            <div class="input-group">
+                                <span class="input-group-text">$</span>
+                                <input type="number" name="price" id="price" readonly class="form-control">
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-6 mb-3">
+                            <label for="stock" class="form-label">Available Stock:</label>
+                            <input type="text" id="stock" readonly class="form-control">
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="quantity" class="form-label">Quantity:</label>
+                            <input type="number" name="quantity" id="quantity" min="1" value="1" 
+                                   class="form-control" onchange="validateQuantity()">
+                        </div>
+                        
+                        <div class="col-md-6 mb-3">
+                            <label for="subtotal" class="form-label">Subtotal:</label>
+                            <div class="input-group">
+                                <span class="input-group-text">$</span>
+                                <input type="text" id="subtotal" readonly class="form-control">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="phone-number" class="form-label">Member Phone Number:</label>
+                        <div class="input-group">
+                            <input type="text" id="phone-number" name="phone_number" 
+                                   value="<?php echo isset($_SESSION['member']) ? $_SESSION['member']['phone_number'] : ''; ?>" 
+                                   placeholder="Enter phone number" class="form-control">
+                            
+                            <?php if (isset($_SESSION['member']) && $_SESSION['member']): ?>
+                            <button type="button" id="clear-member-btn" class="btn btn-outline-secondary">
+                                <i class="fas fa-times"></i> Clear
+                            </button>
+                            <?php endif; ?>
+                        </div>
+                        
+                        <?php if (isset($_SESSION['member']) && $_SESSION['member']): ?>
+                        <div class="alert alert-info mt-2">
+                            <span>
+                                <i class="fas fa-star me-1"></i>
+                                <strong>Total Points:</strong> <?php echo number_format($_SESSION['member']['points'], 2); ?>
+                            </span>
+                            <?php if (!$_SESSION['member']['first_purchase_date']): ?>
+                            <p class="text-muted mt-1"><i class="fas fa-info-circle me-1"></i> This is the member's first purchase. Points earned from this transaction can only be used in future transactions.</p>
+                            <?php else: ?>
+                            <p class="text-muted mt-1"><i class="fas fa-info-circle me-1"></i> Points earned from this transaction can only be used in future transactions.</p>
+                            <?php endif; ?>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    
+                    <input type="hidden" name="product_name" id="product_name">
+                    <button type="submit" name="add_to_cart" id="add_to_cart_btn" class="btn btn-primary w-100">
+                        <i class="fas fa-plus-circle me-2"></i>Add to Cart
+                    </button>
+                </form>
+                
+                <!-- Hidden form for clearing member - separate from all other forms -->
                 <?php if (isset($_SESSION['member']) && $_SESSION['member']): ?>
-                <div style="margin: 5px 0;">
-                    <strong>Points Available:</strong> <?php echo number_format($_SESSION['member']['points'], 2); ?>
-                    <button type="submit" name="clear_member" style="margin-left: 10px;">Clear</button>
-                </div>
+                <form id="clear-member-form" method="POST" action="" style="display: none;">
+                    <input type="hidden" name="clear_member" value="1">
+                </form>
                 <?php endif; ?>
             </div>
-            
-            <input type="hidden" name="product_name" id="product_name">
-            <button type="submit" name="add_to_cart" id="add_to_cart_btn">Add to Cart</button>
-        </form>
+        </div>
     </div>
     
     <!-- Cart -->
     <div class="col-md-8">
-        <h3>Cart</h3>
-        <?php if (empty($_SESSION['cart'])): ?>
-            <p>Cart is empty</p>
-        <?php else: ?>
-            <table border="1" width="100%">
-                <tr>
-                    <th>Product</th>
-                    <th>Price</th>
-                    <th>Quantity</th>
-                    <th>Subtotal</th>
-                    <th>Action</th>
-                </tr>
-                <?php 
-                $total = 0;
-                foreach ($_SESSION['cart'] as $index => $item): 
-                    $total += $item['subtotal'];
-                ?>
-                    <tr>
-                        <td><?php echo $item['name']; ?></td>
-                        <td>$<?php echo number_format($item['price'], 2); ?></td>
-                        <td><?php echo $item['quantity']; ?></td>
-                        <td>$<?php echo number_format($item['subtotal'], 2); ?></td>
-                        <td>
-                            <form method="POST" action="">
-                                <input type="hidden" name="item_index" value="<?php echo $index; ?>">
-                                <button type="submit" name="remove_item">Remove</button>
-                            </form>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-                <tr>
-                    <td colspan="3" align="right"><strong>Total:</strong></td>
-                    <td colspan="2"><strong>$<?php echo number_format($total, 2); ?></strong></td>
-                </tr>
-            </table>
-            
-            <div style="margin-top: 15px;">
-                <form method="POST" action="" id="transactionForm">
-                    <?php if (isset($_SESSION['member']) && $_SESSION['member'] && $_SESSION['member']['points'] > 0): ?>
-                    <div style="margin-bottom: 15px; padding: 10px; background-color: #f5f5f5; border: 1px solid #ddd;">
-                        <label style="margin-right: 10px;">
-                            <input type="checkbox" name="use_points" id="use_points" checked> 
-                            Use all available points for discount (<?php echo number_format($_SESSION['member']['points'], 2); ?> points = $<?php echo number_format($_SESSION['member']['points'] * $POINTS_VALUE, 2); ?>)
-                        </label>
-                    </div>
-                    <?php endif; ?>
-                    
-                    <div>
-                        <button type="submit" name="process_transaction">Process Transaction</button>
-                        <button type="submit" name="clear_cart" style="margin-left: 10px;">Clear Cart</button>
-                    </div>
-                </form>
+        <div class="card">
+            <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                <h3 class="mb-0"><i class="fas fa-shopping-cart me-2"></i>Cart</h3>
+                <?php if (!empty($_SESSION['cart'])): ?>
+                    <span class="badge bg-light text-dark"><?php echo count($_SESSION['cart']); ?> item(s)</span>
+                <?php endif; ?>
             </div>
-        <?php endif; ?>
+            <div class="card-body">
+                <?php if (empty($_SESSION['cart'])): ?>
+                    <div class="text-center p-4 text-muted">
+                        <i class="fas fa-shopping-cart fa-3x mb-3"></i>
+                        <p>Cart is empty</p>
+                    </div>
+                <?php else: ?>
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Product</th>
+                                    <th>Price</th>
+                                    <th>Quantity</th>
+                                    <th>Subtotal</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php 
+                                $total = 0;
+                                foreach ($_SESSION['cart'] as $index => $item): 
+                                    $total += $item['subtotal'];
+                                ?>
+                                    <tr>
+                                        <td><?php echo $item['name']; ?></td>
+                                        <td>$<?php echo number_format($item['price'], 2); ?></td>
+                                        <td><?php echo $item['quantity']; ?></td>
+                                        <td>$<?php echo number_format($item['subtotal'], 2); ?></td>
+                                        <td>
+                                            <form method="POST" action="">
+                                                <input type="hidden" name="item_index" value="<?php echo $index; ?>">
+                                                <button type="submit" name="remove_item" class="btn btn-sm btn-danger">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                            <tfoot>
+                                <tr class="table-primary">
+                                    <td colspan="3" class="text-end"><strong>Total:</strong></td>
+                                    <td colspan="2"><strong>$<?php echo number_format($total, 2); ?></strong></td>
+                                </tr>
+                                
+                                <?php if (isset($_SESSION['member']) && $_SESSION['member'] && $_SESSION['member']['points'] > 0): ?>
+                                    <?php 
+                                    $potential_discount = $_SESSION['member']['points'] * $POINTS_VALUE;
+                                    $discount_amount = ($potential_discount > $total) ? $total : $potential_discount;
+                                    $final_total = $total - $discount_amount;
+                                    ?>
+                                    <tr class="table-info">
+                                        <td colspan="3" class="text-end"><strong>Discount (if points used):</strong></td>
+                                        <td colspan="2"><strong>$<?php echo number_format($discount_amount, 2); ?></strong></td>
+                                    </tr>
+                                    <tr class="table-success">
+                                        <td colspan="3" class="text-end"><strong>Final Total:</strong></td>
+                                        <td colspan="2"><strong id="final-total-value">$<?php echo number_format($final_total, 2); ?></strong></td>
+                                    </tr>
+                                <?php else: ?>
+                                    <tr class="table-success">
+                                        <td colspan="3" class="text-end"><strong>Final Total:</strong></td>
+                                        <td colspan="2"><strong id="final-total-value">$<?php echo number_format($total, 2); ?></strong></td>
+                                    </tr>
+                                <?php endif; ?>
+                                
+                                <!-- Payment section -->
+                                <tr class="table-warning">
+                                    <td colspan="3" class="text-end"><strong>Paid Amount:</strong></td>
+                                    <td colspan="2">
+                                        <div class="input-group">
+                                            <span class="input-group-text">$</span>
+                                            <input type="number" step="0.01" min="0" class="form-control" id="paid-amount" name="paid_amount" placeholder="Enter paid amount" required>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr class="table-danger">
+                                    <td colspan="3" class="text-end"><strong>Change:</strong></td>
+                                    <td colspan="2">
+                                        <strong id="change-amount">$0.00</strong>
+                                    </td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    
+                    <div class="mt-4">
+                        <div class="d-flex justify-content-between">
+                            <form method="POST" action="" id="transactionForm" onsubmit="return validatePayment()">
+                                <?php if (isset($_SESSION['member']) && $_SESSION['member'] && $_SESSION['member']['points'] > 0 && $_SESSION['member']['first_purchase_date']): ?>
+                                <div class="alert alert-success mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="use_points" id="use_points" checked onchange="updateTotals()">
+                                        <label class="form-check-label" for="use_points">
+                                            Use points
+                                            (<?php echo number_format($_SESSION['member']['points'], 2); ?> points = 
+                                            $<?php echo number_format($_SESSION['member']['points'] * $POINTS_VALUE, 2); ?>)
+                                        </label>
+                                    </div>
+                                </div>
+                                <?php elseif (isset($_SESSION['member']) && $_SESSION['member'] && !$_SESSION['member']['first_purchase_date']): ?>
+                                <div class="alert alert-info mb-3">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    <span>Points will be earned after this first purchase and can be used in future transactions.</span>
+                                </div>
+                                <?php elseif (isset($_SESSION['member']) && $_SESSION['member'] && $_SESSION['member']['points'] == 0): ?>
+                                <div class="alert alert-info mb-3">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    <span>No points available for use. Points earned from this purchase can be used in future transactions.</span>
+                                </div>
+                                <?php endif; ?>
+                                
+                                <input type="hidden" name="paid_amount" id="hidden-paid-amount">
+                                <input type="hidden" name="change_amount" id="hidden-change-amount">
+                                
+                                <button type="submit" name="process_transaction" id="process-transaction-btn" class="btn btn-success">
+                                    <i class="fas fa-check-circle me-2"></i>Process Transaction
+                                </button>
+                            </form>
+                            
+                            <!-- Separate form for clearing the cart -->
+                            <form method="POST" action="">
+                                <button type="submit" name="clear_cart" class="btn btn-outline-secondary">
+                                    <i class="fas fa-times-circle me-2"></i>Clear Cart
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
     </div>
 </div>
 
 <script>
-function updatePrice() {
+function updateProduct() {
     const select = document.querySelector('select[name="product_id"]');
     if (select.selectedIndex === 0) {
         document.getElementById('price').value = '';
@@ -417,17 +575,35 @@ function updatePrice() {
         document.getElementById('product_name').value = '';
         document.getElementById('subtotal').value = '';
         document.getElementById('add_to_cart_btn').disabled = true;
+        document.getElementById('product-image-container').style.display = 'none';
         return;
     }
     
     const price = select.options[select.selectedIndex].getAttribute('data-price');
     const name = select.options[select.selectedIndex].getAttribute('data-name');
     const stock = select.options[select.selectedIndex].getAttribute('data-stock');
+    const imagePath = select.options[select.selectedIndex].getAttribute('data-image');
     
     document.getElementById('price').value = price;
     document.getElementById('stock').value = stock;
     document.getElementById('product_name').value = name;
     document.getElementById('add_to_cart_btn').disabled = false;
+    
+    // Handle product image display
+    const imageContainer = document.getElementById('product-image-container');
+    const imagePreview = document.getElementById('product-image-preview');
+    const noImageText = document.getElementById('no-image-text');
+    
+    imageContainer.style.display = 'flex';
+    
+    if (imagePath && imagePath !== 'null') {
+        imagePreview.src = '../../' + imagePath;
+        imagePreview.style.display = 'block';
+        noImageText.style.display = 'none';
+    } else {
+        imagePreview.style.display = 'none';
+        noImageText.style.display = 'block';
+    }
     
     validateQuantity();
 }
@@ -463,9 +639,108 @@ function calculateSubtotal() {
     }
 }
 
-// Initialize form on page load
+function calculateChange() {
+    const paidAmountInput = document.getElementById('paid-amount');
+    const changeAmountElement = document.getElementById('change-amount');
+    const processTransactionButton = document.getElementById('process-transaction-btn');
+    const hiddenPaidAmount = document.getElementById('hidden-paid-amount');
+    const hiddenChangeAmount = document.getElementById('hidden-change-amount');
+    
+    let finalTotal = parseFloat(document.getElementById('final-total-value').textContent.replace('$', ''));
+    let paidAmount = parseFloat(paidAmountInput.value);
+    
+    if (isNaN(paidAmount) || paidAmount < finalTotal) {
+        changeAmountElement.textContent = '$0.00';
+        processTransactionButton.disabled = true;
+        changeAmountElement.style.color = 'red';
+        return;
+    }
+    
+    const change = paidAmount - finalTotal;
+    changeAmountElement.textContent = `$${change.toFixed(2)}`;
+    changeAmountElement.style.color = '';
+    processTransactionButton.disabled = false;
+    
+    // Update hidden fields for form submission
+    hiddenPaidAmount.value = paidAmount;
+    hiddenChangeAmount.value = change;
+}
+
+function updateTotals() {
+    const usePointsCheckbox = document.getElementById('use_points');
+    const finalTotalElement = document.getElementById('final-total-value');
+    
+    // Get original total amount
+    <?php if (isset($total)): ?>
+    let total = <?php echo $total; ?>;
+    <?php else: ?>
+    let total = 0;
+    <?php endif; ?>
+    
+    let discount = 0;
+    
+    // Calculate discount if points are being used
+    if (usePointsCheckbox && usePointsCheckbox.checked) {
+        <?php if (isset($_SESSION['member']) && $_SESSION['member']): ?>
+        const points = <?php echo $_SESSION['member']['points']; ?>;
+        const pointValue = <?php echo $POINTS_VALUE; ?>;
+        const potentialDiscount = points * pointValue;
+        discount = (potentialDiscount > total) ? total : potentialDiscount;
+        <?php endif; ?>
+    }
+    
+    // Calculate final total and update display
+    const finalTotal = total - discount;
+    finalTotalElement.textContent = `$${finalTotal.toFixed(2)}`;
+    
+    // Recalculate change based on new total
+    calculateChange();
+}
+
+function validatePayment() {
+    const paidAmount = parseFloat(document.getElementById('paid-amount').value);
+    const finalTotal = parseFloat(document.getElementById('final-total-value').textContent.replace('$', ''));
+    
+    if (isNaN(paidAmount)) {
+        alert('Please enter a valid payment amount.');
+        return false;
+    }
+    
+    if (paidAmount < finalTotal) {
+        alert('Paid amount must be at least equal to the final total amount.');
+        return false;
+    }
+    
+    // Set the hidden input values for form submission
+    document.getElementById('hidden-paid-amount').value = paidAmount;
+    document.getElementById('hidden-change-amount').value = (paidAmount - finalTotal).toFixed(2);
+    
+    return true;
+}
+
+// Initialize form and event listeners on page load
 window.onload = function() {
-    updatePrice();
+    updateProduct();
+    
+    // Set up event listeners for live calculations
+    const paidAmountInput = document.getElementById('paid-amount');
+    if (paidAmountInput) {
+        paidAmountInput.addEventListener('input', calculateChange);
+    }
+    
+    const usePointsCheckbox = document.getElementById('use_points');
+    if (usePointsCheckbox) {
+        usePointsCheckbox.addEventListener('change', updateTotals);
+    }
+    
+    // Add event listener for the clear member button
+    const clearMemberBtn = document.getElementById('clear-member-btn');
+    if (clearMemberBtn) {
+        clearMemberBtn.addEventListener('click', function() {
+            // Submit the hidden form to clear member
+            document.getElementById('clear-member-form').submit();
+        });
+    }
 };
 </script>
 

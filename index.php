@@ -1,4 +1,5 @@
-<?php
+
+<?php 
 require_once 'include/config.php';
 
 // Redirect to login if not logged in

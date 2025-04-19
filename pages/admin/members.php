@@ -100,93 +100,125 @@ require_once '../../include/header.php';
 
 <div class="row">
     <div class="col-md-12">
-        <h1>Member Management</h1>
+        <h1 class="page-title"><i class="fas fa-id-card me-2"></i>Member Management</h1>
     </div>
 </div>
 
 <div class="row">
     <!-- Add/Edit Member Form -->
     <div class="col-md-4">
-        <h2><?php echo $edit_mode ? 'Edit Member' : 'Add New Member'; ?></h2>
-        
-        <form method="POST" action="">
-            <?php if ($edit_mode): ?>
-                <input type="hidden" name="member_id" value="<?php echo $edit_member['id']; ?>">
-            <?php endif; ?>
-            
-            <div>
-                <label>Phone Number:</label>
-                <input type="text" name="phone_number" required 
-                       value="<?php echo $edit_mode ? $edit_member['phone_number'] : ''; ?>">
+        <div class="card h-100">
+            <div class="card-header">
+                <h3 class="mb-0"><?php echo $edit_mode ? 'Edit Member' : 'Add New Member'; ?></h3>
             </div>
-            
-            <?php if ($edit_mode): ?>
-                <div>
-                    <label>Points:</label>
-                    <input type="number" name="points" step="0.01" required 
-                           value="<?php echo $edit_member['points']; ?>">
-                </div>
-                
-                <div>
-                    <label>First Purchase:</label>
-                    <input type="text" readonly 
-                           value="<?php echo $edit_member['first_purchase_date'] ? date('Y-m-d', strtotime($edit_member['first_purchase_date'])) : 'Not made first purchase'; ?>">
-                </div>
-                
-                <div>
-                    <label>Member Since:</label>
-                    <input type="text" readonly 
-                           value="<?php echo date('Y-m-d', strtotime($edit_member['created_at'])); ?>">
-                </div>
-                
-                <button type="submit" name="update_member">Update Member</button>
-                <a href="<?php echo $_SERVER['PHP_SELF']; ?>" style="margin-left: 10px;">Cancel</a>
-            <?php else: ?>
-                <button type="submit" name="add_member">Add Member</button>
-            <?php endif; ?>
-        </form>
+            <div class="card-body">
+                <form method="POST" action="">
+                    <?php if ($edit_mode): ?>
+                        <input type="hidden" name="member_id" value="<?php echo $edit_member['id']; ?>">
+                    <?php endif; ?>
+                    
+                    <div class="mb-3">
+                        <label for="phone-number" class="form-label">Phone Number:</label>
+                        <input type="text" id="phone-number" name="phone_number" class="form-control" required 
+                               value="<?php echo $edit_mode ? $edit_member['phone_number'] : ''; ?>">
+                    </div>
+                    
+                    <?php if ($edit_mode): ?>
+                        <div class="mb-3">
+                            <label for="points" class="form-label">Points:</label>
+                            <input type="number" id="points" name="points" step="0.01" class="form-control" required 
+                                   value="<?php echo $edit_member['points']; ?>">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="first-purchase" class="form-label">First Purchase:</label>
+                            <input type="text" id="first-purchase" class="form-control" readonly 
+                                   value="<?php echo $edit_member['first_purchase_date'] ? date('Y-m-d', strtotime($edit_member['first_purchase_date'])) : 'Not made first purchase'; ?>">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="member-since" class="form-label">Member Since:</label>
+                            <input type="text" id="member-since" class="form-control" readonly 
+                                   value="<?php echo date('Y-m-d', strtotime($edit_member['created_at'])); ?>">
+                        </div>
+                        
+                        <div class="d-grid gap-2 d-md-flex mt-4">
+                            <button type="submit" name="update_member" class="btn btn-primary">
+                                <i class="fas fa-save me-2"></i>Update Member
+                            </button>
+                            <a href="<?php echo $_SERVER['PHP_SELF']; ?>" class="btn btn-secondary">Cancel</a>
+                        </div>
+                    <?php else: ?>
+                        <div class="d-grid gap-2 d-md-flex mt-4">
+                            <button type="submit" name="add_member" class="btn btn-success">
+                                <i class="fas fa-plus-circle me-2"></i>Add Member
+                            </button>
+                        </div>
+                    <?php endif; ?>
+                </form>
+            </div>
+        </div>
     </div>
     
     <!-- Member List -->
     <div class="col-md-8">
-        <h2>Members</h2>
-        
-        <table border="1" width="100%">
-            <tr>
-                <th>ID</th>
-                <th>Phone Number</th>
-                <th>Points</th>
-                <th>First Purchase</th>
-                <th>Member Since</th>
-                <th>Actions</th>
-            </tr>
-            <?php if (mysqli_num_rows($members) > 0): ?>
-                <?php while ($member = mysqli_fetch_assoc($members)): ?>
-                    <tr>
-                        <td><?php echo $member['id']; ?></td>
-                        <td><?php echo $member['phone_number']; ?></td>
-                        <td><?php echo number_format($member['points'], 2); ?></td>
-                        <td><?php echo $member['first_purchase_date'] ? date('Y-m-d', strtotime($member['first_purchase_date'])) : '-'; ?></td>
-                        <td><?php echo date('Y-m-d', strtotime($member['created_at'])); ?></td>
-                        <td>
-                            <a href="?edit=<?php echo $member['id']; ?>">Edit</a>
-                            
-                            <form method="POST" action="" style="display: inline; margin-left: 10px;">
-                                <input type="hidden" name="member_id" value="<?php echo $member['id']; ?>">
-                                <button type="submit" name="delete_member" 
-                                        onclick="return confirm('Are you sure you want to delete this member?');">
-                                    Delete
-                                </button>
-                            </form>
-                        </td>
-                    </tr>
-                <?php endwhile; ?>
-            <?php else: ?>
-                <tr>
-                    <td colspan="6" align="center">No members found</td>
-                </tr>
-            <?php endif; ?>
-        </table>
+        <div class="card h-100">
+            <div class="card-header">
+                <h3 class="mb-0">Members</h3>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead class="table-light">
+                            <tr>
+                                <th>ID</th>
+                                <th>Phone Number</th>
+                                <th>Points</th>
+                                <th>First Purchase</th>
+                                <th>Member Since</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (mysqli_num_rows($members) > 0): ?>
+                                <?php while ($member = mysqli_fetch_assoc($members)): ?>
+                                    <tr>
+                                        <td><?php echo $member['id']; ?></td>
+                                        <td><?php echo $member['phone_number']; ?></td>
+                                        <td>
+                                            <span class="badge <?php echo $member['points'] > 0 ? 'bg-success' : 'bg-secondary'; ?>">
+                                                <?php echo number_format($member['points'], 2); ?>
+                                            </span>
+                                        </td>
+                                        <td><?php echo $member['first_purchase_date'] ? date('Y-m-d', strtotime($member['first_purchase_date'])) : '-'; ?></td>
+                                        <td><?php echo date('Y-m-d', strtotime($member['created_at'])); ?></td>
+                                        <td>
+                                            <div class="btn-group btn-group-sm">
+                                                <a href="?edit=<?php echo $member['id']; ?>" class="btn btn-primary">
+                                                    <i class="fas fa-edit"></i>
+                                                </a>
+                                                
+                                                <form method="POST" action="" style="display: inline;">
+                                                    <input type="hidden" name="member_id" value="<?php echo $member['id']; ?>">
+                                                    <button type="submit" name="delete_member" class="btn btn-danger"
+                                                            onclick="return confirm('Are you sure you want to delete this member?');">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </form>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                <?php endwhile; ?>
+                            <?php else: ?>
+                                <tr>
+                                    <td colspan="6" class="text-center">No members found</td>
+                                </tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
