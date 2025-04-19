@@ -16,6 +16,15 @@ if (!isset($_SESSION['cart'])) {
     $_SESSION['cart'] = [];
 }
 
+// Initialize member data in session if needed
+if (!isset($_SESSION['member'])) {
+    $_SESSION['member'] = null;
+}
+
+// Points calculation constants
+$POINTS_RATE = 0.01; // Points earned per dollar spent
+$POINTS_VALUE = 0.1; // Value of 1 point (in dollars)
+
 // Process form actions
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // Add product to cart
@@ -24,6 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $quantity = isset($_POST['quantity']) ? intval($_POST['quantity']) : 0;
         $price = isset($_POST['price']) ? floatval($_POST['price']) : 0;
         $name = isset($_POST['product_name']) ? $_POST['product_name'] : '';
+        $phone = isset($_POST['phone_number']) ? $_POST['phone_number'] : '';
         
         // Validate inputs
         if ($product_id <= 0) {
@@ -39,6 +49,33 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         if ($price <= 0) {
             redirectWithMessage('pos.php', 'Product price is invalid', 'error');
             exit;
+        }
+
+        // Check for member if phone number provided
+        if (!empty($phone)) {
+            $phone = mysqli_real_escape_string($conn, $phone);
+            $query = "SELECT * FROM members WHERE phone_number = '$phone'";
+            $result = mysqli_query($conn, $query);
+            
+            if (mysqli_num_rows($result) > 0) {
+                // Member found, store in session
+                $_SESSION['member'] = mysqli_fetch_assoc($result);
+            } else {
+                // No member found, create new member
+                $query = "INSERT INTO members (phone_number, points) VALUES ('$phone', 0)";
+                if (mysqli_query($conn, $query)) {
+                    $member_id = mysqli_insert_id($conn);
+                    $query = "SELECT * FROM members WHERE id = $member_id";
+                    $result = mysqli_query($conn, $query);
+                    $_SESSION['member'] = mysqli_fetch_assoc($result);
+                    
+                    redirectWithMessage('pos.php', "New member registered with phone number: $phone", 'success');
+                    exit;
+                } else {
+                    redirectWithMessage('pos.php', "Error registering member: " . mysqli_error($conn), 'error');
+                    exit;
+                }
+            }
         }
         
         // Check stock availability
@@ -101,12 +138,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
     }
     
+    // Clear member from session
+    if (isset($_POST['clear_member'])) {
+        $_SESSION['member'] = null;
+        redirectWithMessage('pos.php', "Member info cleared", 'success');
+    }
+    
     // Process transaction
     if (isset($_POST['process_transaction'])) {
         if (empty($_SESSION['cart'])) {
             redirectWithMessage('pos.php', 'Cart is empty', 'error');
             exit;
         }
+        
+        // Points related variables
+        $use_points = isset($_POST['use_points']) && $_SESSION['member'] && $_SESSION['member']['points'] > 0;
+        $member_id = isset($_SESSION['member']) ? $_SESSION['member']['id'] : null;
         
         // Start transaction to ensure database consistency
         mysqli_begin_transaction($conn);
@@ -118,9 +165,38 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $total_amount += $item['subtotal'];
             }
             
+            // Calculate discount from points if using points
+            $points_used = 0;
+            $discount_amount = 0;
+            
+            if ($use_points && isset($_SESSION['member'])) {
+                // Use all available points (up to the total amount)
+                $points_used = $_SESSION['member']['points'];
+                $discount_amount = $points_used * $POINTS_VALUE;
+                
+                // Make sure discount doesn't exceed total
+                if ($discount_amount > $total_amount) {
+                    $discount_amount = $total_amount;
+                    $points_used = $total_amount / $POINTS_VALUE;
+                }
+            }
+            
+            // Calculate final total after discount
+            $final_total = $total_amount - $discount_amount;
+            
+            // Calculate points earned (only on the paid amount)
+            $points_earned = $final_total * $POINTS_RATE;
+            
             // Insert transaction
             $cashier_id = $_SESSION['user_id'];
-            $query = "INSERT INTO transactions (cashier_id, total_amount) VALUES ('$cashier_id', '$total_amount')";
+            $query = "INSERT INTO transactions (
+                        cashier_id, total_amount, discount_amount, 
+                        member_id, points_used, points_earned
+                      ) VALUES (
+                        '$cashier_id', '$total_amount', '$discount_amount',
+                        " . ($member_id ? "'$member_id'" : "NULL") . ", 
+                        '$points_used', '$points_earned'
+                      )";
             $result = mysqli_query($conn, $query);
             
             if (!$result) {
@@ -152,6 +228,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 if (!$result || mysqli_affected_rows($conn) == 0) {
                     throw new Exception("Error updating stock for product $product_id. Not enough stock available.");
                 }
+            }
+            
+            // If we have a member, update their points
+            if ($member_id) {
+                // Calculate new points balance
+                $new_points = $_SESSION['member']['points'] - $points_used + $points_earned;
+                
+                // Update member record
+                $query = "UPDATE members SET points = '$new_points'";
+                
+                // Set first purchase date if this is their first purchase
+                if (!$_SESSION['member']['first_purchase_date']) {
+                    $query .= ", first_purchase_date = NOW()";
+                }
+                
+                $query .= " WHERE id = '$member_id'";
+                $result = mysqli_query($conn, $query);
+                
+                if (!$result) {
+                    throw new Exception("Error updating member points: " . mysqli_error($conn));
+                }
+                
+                // Update the member in session if not clearing after transaction
+                $_SESSION['member']['points'] = $new_points;
             }
             
             // Commit the transaction if everything was successful
@@ -231,6 +331,18 @@ require_once '../../include/header.php';
                 <label>Subtotal:</label>
                 <input type="text" id="subtotal" readonly>
             </div>
+
+            <div>
+                <label>Member Phone Number:</label>
+                <input type="text" name="phone_number" value="<?php echo isset($_SESSION['member']) ? $_SESSION['member']['phone_number'] : ''; ?>" 
+                       placeholder="Enter phone number">
+                <?php if (isset($_SESSION['member']) && $_SESSION['member']): ?>
+                <div style="margin: 5px 0;">
+                    <strong>Points Available:</strong> <?php echo number_format($_SESSION['member']['points'], 2); ?>
+                    <button type="submit" name="clear_member" style="margin-left: 10px;">Clear</button>
+                </div>
+                <?php endif; ?>
+            </div>
             
             <input type="hidden" name="product_name" id="product_name">
             <button type="submit" name="add_to_cart" id="add_to_cart_btn">Add to Cart</button>
@@ -262,7 +374,7 @@ require_once '../../include/header.php';
                         <td><?php echo $item['quantity']; ?></td>
                         <td>$<?php echo number_format($item['subtotal'], 2); ?></td>
                         <td>
-                            <form method="POST">
+                            <form method="POST" action="">
                                 <input type="hidden" name="item_index" value="<?php echo $index; ?>">
                                 <button type="submit" name="remove_item">Remove</button>
                             </form>
@@ -275,12 +387,21 @@ require_once '../../include/header.php';
                 </tr>
             </table>
             
-            <div style="margin-top: 10px;">
-                <form method="POST" style="display: inline;">
-                    <button type="submit" name="process_transaction">Process Transaction</button>
-                </form>
-                <form method="POST" style="display: inline; margin-left: 10px;">
-                    <button type="submit" name="clear_cart">Clear Cart</button>
+            <div style="margin-top: 15px;">
+                <form method="POST" action="" id="transactionForm">
+                    <?php if (isset($_SESSION['member']) && $_SESSION['member'] && $_SESSION['member']['points'] > 0): ?>
+                    <div style="margin-bottom: 15px; padding: 10px; background-color: #f5f5f5; border: 1px solid #ddd;">
+                        <label style="margin-right: 10px;">
+                            <input type="checkbox" name="use_points" id="use_points" checked> 
+                            Use all available points for discount (<?php echo number_format($_SESSION['member']['points'], 2); ?> points = $<?php echo number_format($_SESSION['member']['points'] * $POINTS_VALUE, 2); ?>)
+                        </label>
+                    </div>
+                    <?php endif; ?>
+                    
+                    <div>
+                        <button type="submit" name="process_transaction">Process Transaction</button>
+                        <button type="submit" name="clear_cart" style="margin-left: 10px;">Clear Cart</button>
+                    </div>
                 </form>
             </div>
         <?php endif; ?>

@@ -18,10 +18,13 @@ $user_id = $_SESSION['user_id'];
 $is_admin = hasRole('admin');
 
 // Get transaction data
-$query = "SELECT * FROM transactions WHERE transaction_id = $transaction_id";
+$query = "SELECT t.*, u.username FROM transactions t 
+          LEFT JOIN users u ON t.cashier_id = u.user_id 
+          WHERE t.transaction_id = $transaction_id";
+          
 if (!$is_admin) {
     // Cashiers can only view their own transactions
-    $query .= " AND cashier_id = $user_id";
+    $query .= " AND t.cashier_id = $user_id";
 }
 
 $result = mysqli_query($conn, $query);
@@ -44,6 +47,16 @@ while ($row = mysqli_fetch_assoc($result)) {
     $items[] = $row;
 }
 
+// Get member information if the transaction has a member
+$member = null;
+if ($transaction['member_id']) {
+    $query = "SELECT * FROM members WHERE id = " . $transaction['member_id'];
+    $result = mysqli_query($conn, $query);
+    if ($result && mysqli_num_rows($result) > 0) {
+        $member = mysqli_fetch_assoc($result);
+    }
+}
+
 // Format date for better display
 $transaction['date_time'] = date('M d, Y H:i:s', strtotime($transaction['date_time']));
 
@@ -51,6 +64,7 @@ $transaction['date_time'] = date('M d, Y H:i:s', strtotime($transaction['date_ti
 echo json_encode([
     'success' => true,
     'transaction' => $transaction,
-    'items' => $items
+    'items' => $items,
+    'member' => $member
 ]);
 ?>

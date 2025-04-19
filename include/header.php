@@ -61,6 +61,7 @@ if (session_status() == PHP_SESSION_NONE) {
             <?php if (isset($_SESSION['role']) && hasRole('admin')): ?>
                 <!-- Admin Navigation -->
                 <a href="/ukk/pages/admin/products.php">Products</a>
+                <a href="/ukk/pages/admin/members.php">Members</a>
                 <a href="/ukk/pages/admin/transactions.php">Transactions</a>
             <?php else: ?>
                 <!-- Cashier Navigation -->
